@@ -1,0 +1,71 @@
+name: fittrack-local
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-fittrack}
+      POSTGRES_USER: ${POSTGRES_USER:-fittrack_local}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fittrack_local_only}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "60", "1", "--loglevel", "warning"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+    environment:
+      DATABASE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-fittrack}
+      DATABASE_USERNAME: ${POSTGRES_USER:-fittrack_local}
+      DATABASE_PASSWORD: ${POSTGRES_PASSWORD:-fittrack_local_only}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      JWT_SECRET: ${JWT_SECRET:-fittrack_local_development_jwt_secret_change_me_32_bytes}
+      STORAGE_PATH: /data/private
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      AI_BASE_URL: ${AI_BASE_URL:-https://api.openai.com/v1}
+      AI_VISION_MODEL: ${AI_VISION_MODEL:-gpt-4o-mini}
+      AI_TEXT_MODEL: ${AI_TEXT_MODEL:-gpt-4o-mini}
+    ports:
+      - "${BACKEND_PORT:-8080}:8080"
+    volumes:
+      - private_images:/data/private
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080; printf \"GET /actuator/health HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n\" >&3; grep -q \"200\" <&3'"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+  private_images:

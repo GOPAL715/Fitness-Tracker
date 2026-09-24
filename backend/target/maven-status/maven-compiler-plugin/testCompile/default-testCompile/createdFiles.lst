@@ -1,0 +1,3 @@
+com\fittrack\app\AppDataServiceTest.class
+com\fittrack\scanner\ScannerServiceTest.class
+com\fittrack\acceptance\AcceptanceHttpTest.class

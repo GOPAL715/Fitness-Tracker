@@ -1,0 +1,1 @@
+package com.fittrack.coach; import org.springframework.stereotype.Service; import java.util.*; @Service public class CoachService { public String weeklyReview(Map<String,Object> metrics){return "Weekly review: consistency matters more than perfection. Use your logged training, recovery and nutrition trends as the next small focus.";} }

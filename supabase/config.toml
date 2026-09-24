@@ -1,0 +1,7 @@
+[functions.analyze-food-photo]
+verify_jwt = true
+entrypoint = "./functions/analyze-food-photo/index.ts"
+
+[functions.weekly-coach]
+verify_jwt = true
+entrypoint = "./functions/weekly-coach/index.ts"

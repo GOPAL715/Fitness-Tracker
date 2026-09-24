@@ -1,0 +1,4 @@
+package com.fittrack.auth;
+import org.springframework.web.bind.annotation.*; import org.springframework.security.core.annotation.AuthenticationPrincipal; import java.util.*;
+@RestController @RequestMapping({"/api/v1/auth","/api/auth"}) public class AuthController { AuthService service; public AuthController(AuthService s){service=s;} @PostMapping("/register") public Tokens register(@RequestBody Credentials c){return service.register(c);} @PostMapping("/login") public Tokens login(@RequestBody Credentials c){return service.login(c);} @PostMapping("/refresh") public Tokens refresh(@RequestBody Map<String,String> r){return service.rotate(r.get("refreshToken"));} @PostMapping("/logout") public void logout(@RequestBody(required=false) Map<String,String> r){service.logout(r==null?null:r.get("refreshToken"));} @GetMapping("/me") public Map<String,Object> me(@AuthenticationPrincipal String id){return service.me(id);} }
+

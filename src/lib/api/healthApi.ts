@@ -1,0 +1,11 @@
+import { apiClient, json } from "./apiClient";
+export const getAppData = () => apiClient<Record<string, unknown>>("/app-data");
+export const markNotificationRead = (id: string) => apiClient(`/coach-notifications/${id}/read`, { method: "POST" });
+const resource = "/health-devices";
+export const listHealthDevices = () => apiClient(resource);
+export const addHealthDevice = (payload: unknown) => apiClient(resource, { method: "POST", ...json(payload) });
+export const updateHealthDevice = (id: string, payload: unknown) => apiClient(`${resource}/${id}`, { method: "PATCH", ...json(payload) });
+export const deleteHealthDevice = (id: string) => apiClient<void>(`${resource}/${id}`, { method: "DELETE" });
+export const updateDevice = updateHealthDevice;
+export const addWater = (payload: unknown) => apiClient("/water", { method: "POST", ...json(payload) });
+export const saveBodyMetric = (payload: unknown) => apiClient("/body-metrics", { method: "POST", ...json(payload) });

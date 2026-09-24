@@ -1,0 +1,17 @@
+{
+  "name": "FitTrack AI — Fitness Platform",
+  "short_name": "FitTrack",
+  "description": "Track workouts, nutrition, habits and recovery with explainable insights and AI coaching.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#0b1120",
+  "theme_color": "#0b1120",
+  "categories": ["health", "fitness", "lifestyle"],
+  "icons": [
+    { "src": "/icon-192.webp", "sizes": "192x192", "type": "image/webp", "purpose": "any" },
+    { "src": "/icon-512.webp", "sizes": "512x512", "type": "image/webp", "purpose": "any" },
+    { "src": "/icon-maskable-512.webp", "sizes": "512x512", "type": "image/webp", "purpose": "maskable" }
+  ]
+}
