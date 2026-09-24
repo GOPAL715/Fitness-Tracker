@@ -2,9 +2,12 @@ package com.fittrack.acceptance;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.junit.jupiter.api.*;
+import org.junit.jupiter.api.Test;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.boot.test.mock.mockito.MockBean;
+import com.fittrack.ai.AiProvider;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
@@ -43,6 +46,7 @@ class AcceptanceHttpTest {
     @Autowired MockMvc mvc;
     @Autowired ObjectMapper mapper;
     @Autowired JdbcTemplate jdbc;
+    @MockBean AiProvider aiProvider;
 
     @Test void flywayCreatedRequiredSchemaAndConstraints() {
         assertThat(jdbc.queryForObject("select count(*) from information_schema.tables where table_schema='public' and table_name in ('app_users','food_scans','food_scan_items','workout_sessions','meal_items')", Integer.class), is(5));
@@ -106,5 +110,65 @@ class AcceptanceHttpTest {
         mvc.perform(post("/api/v1/exercises").header("Authorization", "Bearer " + access)
                 .contentType(MediaType.APPLICATION_JSON).content("{\"name\":\"forbidden\"}"))
                 .andExpect(status().isNotFound());
+    }
+    private String registerUser(String prefix) throws Exception {
+        return mvc.perform(post("/api/v1/auth/register").contentType(MediaType.APPLICATION_JSON)
+                .content(mapper.writeValueAsString(Map.of("email", prefix + UUID.randomUUID() + "@example.test", "password", "StrongPass123!"))))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+    }
+    private record Session(String id, String access) {}
+    private Session registerSession(String prefix) throws Exception {
+        JsonNode response = mapper.readTree(registerUser(prefix));
+        return new Session(response.path("user").path("id").asText(), response.path("access_token").asText());
+    }
+
+    @Test void waterContractIsAuthenticatedAndOwnerScoped() throws Exception {
+        mvc.perform(post("/api/v1/water").contentType(MediaType.APPLICATION_JSON).content("{\"amount\":8}")).andExpect(status().isUnauthorized());
+        String access = mapper.readTree(registerUser("water-")).path("access_token").asText();
+        mvc.perform(post("/api/v1/water").header("Authorization", "Bearer " + access).contentType(MediaType.APPLICATION_JSON).content("{\"amount\":8,\"user_id\":\"" + UUID.randomUUID() + "\"}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(post("/api/v1/water").header("Authorization", "Bearer " + access).contentType(MediaType.APPLICATION_JSON).content("{\"amount\":8}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.metric_date").exists()).andExpect(jsonPath("$.water_oz").value(8));
+        mvc.perform(post("/api/v1/water").header("Authorization", "Bearer " + access).contentType(MediaType.APPLICATION_JSON).content("{\"oz\":3}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.water_oz").value(11));
+        mvc.perform(post("/api/v1/water").header("Authorization", "Bearer " + access).contentType(MediaType.APPLICATION_JSON).content("{\"amount\":0}")).andExpect(status().isBadRequest());
+        mvc.perform(post("/api/v1/water").header("Authorization", "Bearer " + access).contentType(MediaType.APPLICATION_JSON).content("{\"amount\":1001}")).andExpect(status().isBadRequest());
+    }
+
+    @Test void coachUuidBindingUsesAuthenticatedIdentity() throws Exception {
+        String access = mapper.readTree(registerUser("coach-uuid-")).path("access_token").asText();
+        org.mockito.Mockito.when(aiProvider.analyzeCoach(org.mockito.ArgumentMatchers.anyString())).thenReturn("mock review");
+        mvc.perform(post("/api/v1/coach/analyze").header("Authorization", "Bearer " + access).contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isOk());
+    }
+
+    @Test void notificationReadIsOwnerScoped() throws Exception {
+        Session owner = registerSession("notice-owner-");
+        Session other = registerSession("notice-other-");
+        UUID id = UUID.randomUUID();
+        jdbc.update("insert into coach_notifications(id,user_id,title,message,kind,is_read,created_at) values (?,?::uuid,'Review','Body','info',false,now())", id, owner.id());
+        mvc.perform(post("/api/v1/coach-notifications/" + id + "/read").header("Authorization", "Bearer " + other.access()))
+                .andExpect(status().isNotFound());
+        mvc.perform(post("/api/v1/coach-notifications/" + id + "/read").header("Authorization", "Bearer " + owner.access()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.is_read").value(true));
+        mvc.perform(post("/api/v1/coach-notifications/" + id + "/read")).andExpect(status().isUnauthorized());
+    }
+
+    @Test void healthDevicePatchIsOwnerScopedAndPartial() throws Exception {
+        Session owner = registerSession("device-owner-");
+        Session other = registerSession("device-other-");
+        UUID id = UUID.randomUUID();
+        jdbc.update("insert into health_devices(id,user_id,device_name,device_type,status,created_at) values (?,?::uuid,'Watch','Fitness','Connected',now())", id, owner.id());
+        mvc.perform(patch("/api/v1/health-devices/" + id).header("Authorization", "Bearer " + owner.access())
+                .contentType(MediaType.APPLICATION_JSON).content("{\"status\":\"Disconnected\"}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("Disconnected")).andExpect(jsonPath("$.device_name").value("Watch"));
+        mvc.perform(patch("/api/v1/health-devices/" + id).header("Authorization", "Bearer " + owner.access())
+                .contentType(MediaType.APPLICATION_JSON).content("{\"user_id\":\"" + other.id() + "\"}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(patch("/api/v1/health-devices/" + id).header("Authorization", "Bearer " + other.access())
+                .contentType(MediaType.APPLICATION_JSON).content("{\"status\":\"Connected\"}"))
+                .andExpect(status().isNotFound());
+        mvc.perform(patch("/api/v1/health-devices/" + id).contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isUnauthorized());
     }
 }

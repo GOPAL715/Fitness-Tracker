@@ -106,8 +106,7 @@ public class OwnedResourceService {
         if (values.isEmpty()) return get(resource, id, user);
         if (spec.scope() != Scope.USER) proveParent(spec.scope(), values, user);
         String assignments = values.keySet().stream().map(name -> name + "=:" + name).collect(Collectors.joining(","));
-        jdbc.update("UPDATE " + spec.table() + " SET " + assignments + " WHERE id=:id RETURNING id",
-            new MapSqlParameterSource(values).addValue("id", uuid(id, "resource id")));
+        jdbc.update("UPDATE " + spec.table() + " SET " + assignments + " WHERE id=:id", new MapSqlParameterSource(values).addValue("id", uuid(id, "resource id")));
         return one(resource, id, user);
     }
 
