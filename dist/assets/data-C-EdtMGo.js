@@ -1,1 +1,0 @@
-import{n as e,t}from"./index-hcJwdnv0.js";async function n(){let e=await t(`/app-data`);return e.appData??e.data??e}async function r(n,r){return t(`/water`,{method:`POST`,...e(n?{id:n.id,amount:r,water_oz:n.water_oz+r}:{amount:r,oz:r})})}export{r as addWater,n as getAppData};
