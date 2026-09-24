@@ -2,6 +2,7 @@ package com.fittrack.ai;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
@@ -20,6 +21,7 @@ public class OpenAiProvider implements AiProvider {
     private final RestClient client;
     private final ObjectMapper mapper;
 
+    @Autowired
     public OpenAiProvider(@Value("${app.ai-key}") String key, @Value("${app.ai-base-url}") String baseUrl,
             @Value("${app.ai-vision-model}") String visionModel) {
         this(key, visionModel, client(baseUrl), new ObjectMapper());

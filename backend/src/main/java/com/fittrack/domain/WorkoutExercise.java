@@ -12,10 +12,6 @@ public class WorkoutExercise {
     public UUID getId() { return id; }
     public void setId(UUID value) { id = value; }
     @PrePersist void init() { if (id == null) id = UUID.randomUUID(); }
-    @Column(name = "user_id", nullable = false)
-    private UUID userId;
-    public UUID getUserId() { return userId; }
-    public void setUserId(UUID value) { userId = value; }
     @Column(name = "workout_session_id")
     private UUID workoutSessionId;
     public UUID getWorkoutSessionId() { return workoutSessionId; }

@@ -25,4 +25,6 @@ jobs:
         run: docker info
 
       - name: Run backend tests
+        env:
+          DOCKER_API_VERSION: '1.40'
         run: mvn -f backend/pom.xml clean test

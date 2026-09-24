@@ -34,18 +34,18 @@ public class AppDataService {
         if (userId == null || userId.isBlank()) throw new IllegalArgumentException("Authenticated user is required");
         Map<String,Object> result = new LinkedHashMap<>();
         for (String table : USER_TABLES) {
-            String sql = "SELECT * FROM " + table + " WHERE user_id = ?";
+            String sql = "SELECT * FROM " + table + " WHERE user_id = CAST(? AS uuid)";
             List<Map<String,Object>> rows = jdbc.queryForList(sql, userId);
             if ("fitness_profile".equals(table)) result.put("profile", rows.isEmpty() ? null : rows.get(0));
             else result.put(NAMES.get(table), rows);
         }
         result.put("exercises", jdbc.queryForList("SELECT * FROM exercises ORDER BY name"));
         result.put("foods", jdbc.queryForList("SELECT * FROM foods ORDER BY name"));
-        result.put("workoutExercises", jdbc.queryForList("SELECT we.* FROM workout_exercises we JOIN workout_sessions ws ON ws.id=we.workout_session_id WHERE ws.user_id=?", userId));
-        result.put("exerciseSets", jdbc.queryForList("SELECT es.* FROM exercise_sets es JOIN workout_exercises we ON we.id=es.workout_exercise_id JOIN workout_sessions ws ON ws.id=we.workout_session_id WHERE ws.user_id=?", userId));
-        result.put("templateExercises", jdbc.queryForList("SELECT te.* FROM workout_template_exercises te JOIN workout_templates t ON t.id=te.template_id WHERE t.user_id=?", userId));
-        result.put("mealItems", jdbc.queryForList("SELECT mi.* FROM meal_items mi JOIN meals m ON m.id=mi.meal_id WHERE m.user_id=?", userId));
-        result.put("foodScanItems", jdbc.queryForList("SELECT fi.* FROM food_scan_items fi JOIN food_scans fs ON fs.id=fi.scan_id WHERE fs.user_id=?", userId));
+        result.put("workoutExercises", jdbc.queryForList("SELECT we.* FROM workout_exercises we JOIN workout_sessions ws ON ws.id=we.workout_session_id WHERE ws.user_id=CAST(? AS uuid)", userId));
+        result.put("exerciseSets", jdbc.queryForList("SELECT es.* FROM exercise_sets es JOIN workout_exercises we ON we.id=es.workout_exercise_id JOIN workout_sessions ws ON ws.id=we.workout_session_id WHERE ws.user_id=CAST(? AS uuid)", userId));
+        result.put("templateExercises", jdbc.queryForList("SELECT te.* FROM workout_template_exercises te JOIN workout_templates t ON t.id=te.template_id WHERE t.user_id=CAST(? AS uuid)", userId));
+        result.put("mealItems", jdbc.queryForList("SELECT mi.* FROM meal_items mi JOIN meals m ON m.id=mi.meal_id WHERE m.user_id=CAST(? AS uuid)", userId));
+        result.put("foodScanItems", jdbc.queryForList("SELECT fi.* FROM food_scan_items fi JOIN food_scans fs ON fs.id=fi.scan_id WHERE fs.user_id=CAST(? AS uuid)", userId));
         return result;
     }
 }
