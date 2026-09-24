@@ -8,52 +8,22 @@ a fact.
 
 ## The flow
 
+The active runtime is Spring Boot `ScannerController` and `ScannerService`:
+
 ```
-              TAKE FOOD PHOTO
-                     |
-                     v
-              IMAGE UPLOAD
-        client-side validation + compression
-                     |
-                     v
-             PRIVATE STORAGE
-       food-images/{user_id}/{scan_id}/original.jpg
-                     |
-                     v
-             EDGE FUNCTION
-        analyze-food-photo (verify caller)
-                     |
-                     v
-              VISION MODEL
-     returns names + grams + confidence ONLY
-                     |
-        +------------+-------------+
-        |                          |
-        v                          v
-  RESPONSE VALIDATION       (rejects malformed)
-        |
-        v
-   NUTRITION LOOKUP  <-- foods table (58 seeded items)
-        |
-        v
-  NUTRITION CALCULATION  <-- deterministic, per-100g scaled
-        |
-        v
-    USER REVIEW
-   edit food / edit portion / delete / add
-        |
-   +----+----+
-   |         |
-   v         v
- EDIT     CONFIRM
-             |
-             v
-        SAVE MEAL
-     meals + meal_items
-             |
-             v
-   scan marked confirmed, linked to meal
+multipart file upload
+  -> declared MIME + magic-byte + 8 MiB validation
+  -> private owner-scoped storage
+  -> persisted food_scans row
+  -> AiProvider analysis and output validation
+  -> controlled food matching and server-side nutrition calculation
+  -> user correction through PUT /api/v1/food-scans/{id}/items
+  -> transactional confirmation creates meals and meal_items
+  -> scan deletion removes the scan and stored object
 ```
+
+The JWT subject determines the storage owner. The client does not provide an ownership user ID. If the
+initial database persistence fails, the service removes the stored object before propagating the error.
 
 ## Why the model is never asked for calories
 
@@ -75,38 +45,30 @@ nutrition source later changes one module, not the whole feature.
 
 ## Validation
 
-The model's response is untrusted input. `parseDetections` (client) and the
-matching validator in the Edge Function both enforce:
+The model's response is untrusted input. The backend validates the provider result before persisting
+items. Detections are constrained to a bounded item count, valid names, finite gram values in the supported
+range, and confidence values in the 0..1 range. Nutrition values are calculated server-side from matched
+food rows; model-provided nutrition is not trusted as the final value.
 
-- response must be a JSON object with an `items` array
-- 1 to 12 items
-- `name` must be a non-empty string of 2 to 80 characters
-- `estimated_grams` must be a finite number between 0 and 5000
-- `confidence` is clamped to 0..1, defaulting to 0.5 when missing
-
-Anything that fails is dropped. If every item fails, the scan is marked `failed`
-with a user-facing message rather than silently producing an empty meal.
+Malformed or failed analysis is recorded as a failed scan. A user can correct item selection and grams
+before confirmation; confirmation recalculates totals and creates the meal and meal items transactionally.
 
 ## Storage and privacy
 
-- The `food-images` bucket is **private**.
-- Path convention `{user_id}/{scan_id}/original.jpg` lets storage policies
-  compare the first path segment to `auth.uid()::text`.
-- Every operation (read, insert, update, delete) is restricted to the caller's
-  own folder.
-- The Edge Function reads the image through a 300-second signed URL, so the file
-  is never publicly reachable.
-- Uploads are limited by the bucket itself to JPEG/PNG/WebP and 8 MB.
+- Scan objects are stored on the backend's configured private filesystem root, under an owner-scoped key.
+- The JWT subject determines the storage owner; a client-supplied ownership ID is not used.
+- Upload, retrieval, correction, confirmation, and deletion all check the authenticated owner.
+- JPEG, PNG, and WebP signatures are accepted, with an 8 MiB limit.
+- Deletion removes the stored object after the owner check.
+
+There is no public object-serving route. Durable managed object storage, retention policy, malware scanning,
+and production storage controls remain future operational work.
 
 ## Cost control
 
-- Images are downscaled to 1024 px and re-encoded at quality 0.82 before upload.
-- `max_tokens` is capped at 700.
-- The prompt asks for the minimum information required.
-- Every request is recorded in `ai_usage` with token counts, model, success flag
-  and an estimated cost, so spend is measurable per user and per feature.
-- Per-user scan limits are the natural next step; the data to enforce them
-  already exists in `ai_usage`.
+- Provider configuration and optional usage persistence are backend concerns.
+- Tests use a test-scoped `AiProvider`; no real external AI request is required.
+- Complete per-user quotas, cost controls, and production provider observability remain Phase 14 work.
 
 ## Confidence handling
 
@@ -147,17 +109,15 @@ daily rings immediately, and are included in the weekly coach's context via
 | --- | --- |
 | Invalid file type or size | rejected before upload with a clear message |
 | Upload fails | error shown, user returned to the preview step |
-| AI key not configured | explicit "not configured" message, scanner remains usable manually |
-| Provider error | scan marked `failed`, generic user message, logged in `ai_usage` |
-| Malformed AI response | rejected, scan marked `failed`, user told to try a clearer photo |
-| No nutrition match | item flagged, user prompted to pick the closest food |
-| Session expired | explicit sign-in prompt |
+| AI provider not configured | provider-dependent analysis may be unavailable; the scanner remains available for manual correction/meal workflows |
+| Provider error | scan marked `failed` with a sanitized error; the persisted scan remains owner-scoped |
+| Malformed AI response | rejected by backend validation; no unsafe nutrition is persisted |
+| No nutrition match | item remains uncorrected and the user can choose/correct a food |
+| Session expired | API returns 401; client clears its token state |
 
 ## Verification status
 
-The flow is implemented end to end: upload, private storage, edge function,
-validation, nutrition lookup, correction UI, recalculation, meal creation and
-scan linkage. Automated tests cover validation, food matching, portion maths and
-the scan-to-meal transformation (76 tests passing). The live vision call itself
-has not been exercised against the provider, because no AI key is configured in
-this environment.
+The Spring flow is implemented: upload validation, private storage, persistence, provider abstraction and
+output handling, nutrition calculation, correction, transactional meal/item confirmation, deletion, and
+storage cleanup. Backend tests use a test-scoped `AiProvider`; no live provider call is required. The
+historical `supabase/functions/analyze-food-photo` and `weekly-coach` files are migration reference only.

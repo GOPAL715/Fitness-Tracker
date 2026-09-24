@@ -6,7 +6,7 @@
 - Access tokens are signed HS256 JWTs with a 15-minute configured lifetime. The secret must be at least 32 bytes when supplied by the JJWT library.
 - Refresh tokens are random opaque values; only SHA-256 hashes are stored. Refresh rotation revokes the old token. Logout revokes a known token.
 - Sessions are stateless. CSRF is disabled because browser API calls use bearer tokens rather than cookies.
-- All routes except auth and `/actuator/health` require authentication.
+- Public auth, actuator health, and `/api/v1/health` endpoints; all other routes require authentication.
 - Scan uploads are capped at 8 MiB and checked for JPEG, PNG, or WebP magic bytes. Paths are normalized and must remain below the configured root.
 - Server error configuration suppresses exception messages globally; the custom 500 response is generic.
 - Flyway owns fresh schema creation and Hibernate runs with `ddl-auto: validate`.
@@ -17,18 +17,23 @@
 
 Production must inject database credentials, a high-entropy JWT secret, and any AI key through a secret manager or protected runtime secrets. Never bake them into an image, commit them, expose them through Vite variables, or log them. Rotate the Compose-local JWT default before any shared deployment. The current image build copies application source but contains no intended production secret.
 
-## Significant gaps
+## Ownership and current limitations
 
-- No password reset, email verification, email delivery, account recovery, MFA, rate limiting, lockout, or breached-password check exists.
-- Supabase Auth users/password hashes cannot be directly imported. See [backend-migration.md](backend-migration.md).
-- `user_roles` and JWT roles exist, but there is no role enforcement.
-- Authentication and ownership are implemented in Spring Security and server-side services. The executable Docker-backed acceptance suite is present but requires Docker Desktop to run.
-- The frontend stores access and refresh tokens in `localStorage`, which exposes them to XSS. A hardened browser design should prefer secure, HttpOnly, SameSite cookies with CSRF protection or a carefully reviewed in-memory/session design.
-- The JWT filter silently ignores invalid bearer tokens, leaving requests unauthenticated; it does not establish a rich principal or verify that the user is still enabled.
-- No CORS configuration is defined. A separate frontend origin therefore needs an explicit reviewed policy; do not solve this with wildcard origins and credentials.
-- No security headers, request-size/rate controls beyond multipart upload, audit logging, dependency scanning, SAST/DAST, or penetration test is evidenced here.
-- Images are detected by signature only, stored on local disk, and have no serving route, encryption policy, malware scanning, quota, retention, or deletion workflow. `image_path` is an internal path and must not become an unrestricted filesystem URL.
-- Logs and AI inputs are not reviewed for health data/PII. No AI request is currently made, despite AI configuration being present.
+The API derives ownership from the authenticated JWT subject. Direct resources are filtered by the JWT
+user ID; child resources are joined to their owned parent. The writable-column service rejects
+`user_id` and keeps shared `exercises` and `foods` catalogs read-only. Scan rows and stored objects are
+owner-scoped, and scan deletion removes the stored object. Invalid bearer tokens are rejected with 401;
+Spring Security maps denied authenticated requests to 403.
+
+The CORS bean in `SecurityConfig` allows `http://localhost:5173` and `http://localhost:3000`, permits
+`GET`, `POST`, `PUT`, `PATCH`, `DELETE`, and `OPTIONS`, allows `Authorization` and `Content-Type`, and
+allows credentials. Production origins must be explicitly configured and reviewed; this is not a complete
+production abuse-control policy.
+
+The current browser client stores access and refresh tokens in `localStorage`, which exposes them to XSS.
+There is no password recovery, email verification, MFA, explicit rate limiting, account lockout, breached
+password check, or production security monitoring. The full refresh, ownership, scanner rollback, and HTTP
+error matrix remains Phase 12 verification work.
 
 ## Operational hardening before production
 

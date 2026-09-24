@@ -2,20 +2,20 @@
 
 ## Current status
 
-The Spring Boot replacement is a partial implementation, not a production-equivalent cutover. This repository contains no live Supabase export/import job, and no claim is made that existing production users or rows have been migrated. The supported starting point is a fresh PostgreSQL database initialized by Flyway.
+The Spring Boot REST API is the active backend. The frontend uses the versioned REST client at `/api/v1`; Supabase files are retained only as historical migration reference and are not part of the runtime. Fresh PostgreSQL is initialized by Flyway. Existing production data has not been migrated.
 
-The frontend now targets the Spring Boot API. The scanner and ownership implementations are present, but the Docker-backed acceptance suite cannot execute until Docker Desktop is running.
+The frontend targets the Spring Boot API at `/api/v1`. The scanner, generic owned-resource routes, analytics routes, and Testcontainers acceptance suite are implemented. Supabase files are historical reference material only.
 
 ## Supabase mapping
 
 | Supabase capability | Spring Boot target | Status / required work |
 | --- | --- | --- |
-| `auth.users` and email/password sessions | `app_users`, `refresh_tokens`; signed JWT access tokens | Different model. Preserve user UUIDs only with a reviewed transform. Existing Supabase password hashes and sessions cannot be imported directly. |
-| PostgREST table reads/writes | REST resources with `user_id` from JWT | Contract and resource controllers still need implementation. Enforce ownership in every query, not only client filters. |
-| Supabase RLS | Spring service authorization plus database grants | There is no RLS in the fresh Spring schema. API-level checks must be added per resource and integration-tested. |
-| Storage objects used for scans | Private filesystem volume at `STORAGE_PATH` | The current scan route stores files under an authenticated user ID, but no read/delete endpoint or shared durable object store is implemented. |
-| Edge Function food analysis | Spring scanner/coach service | Configuration keys exist, but current scanner only validates/stores an image and coach returns fixed text. No AI request is implemented. |
-| Redis / rate limiting or sessions | `redis` in local Compose | Redis is provisioned for the target architecture but no Spring Redis client/configuration or Redis behavior is implemented. |
+| `auth.users` and email/password sessions | `app_users`, `refresh_tokens`; signed JWT access tokens | Active replacement uses Spring accounts and rotating opaque refresh tokens. Existing Supabase password hashes and sessions cannot be imported directly. |
+| PostgREST table reads/writes | Versioned Spring REST resources with JWT-derived ownership | Core owned-resource CRUD and child-parent authorization are implemented. Further edge-case verification remains Phase 12. |
+| Supabase RLS | Spring service authorization plus database constraints | The active Spring schema has no Supabase RLS layer; ownership is enforced in backend services. |
+| Storage objects used for scans | Private owner-scoped filesystem storage at `STORAGE_PATH` | Scanner upload, correction, confirmation, deletion, and stored-object cleanup are implemented. |
+| Edge Function food analysis | Spring `ScannerService` and `AiProvider` | Active Spring path validates provider output, matches foods, and calculates nutrition. Historical Edge Functions remain reference only. |
+| Redis / rate limiting or sessions | `redis` in local Compose | Redis is provisioned but currently has no Spring runtime client or application behavior. |
 
 ## Schema assumptions
 
@@ -40,7 +40,17 @@ No automated transform or validation report is included.
 4. Register through `POST /api/v1/auth/register`; do not import demo rows.
 5. Remove the named volumes (`docker compose down -v`) only when intentional, because this destroys local data.
 
-Redis is a startup dependency in Compose but is not evidence of implemented caching. The AI variables may be empty; current endpoints do not call the provider.
+Redis is a startup dependency in Compose but is not evidence of implemented caching. The AI provider is
+optional backend configuration; tests use a test-scoped provider and do not require a live external AI
+call.
+
+## Remaining work by phase
+
+- **Phase 12:** executable security, two-user ownership, scanner lifecycle, and HTTP error-contract matrix.
+- **Phase 13:** composite transaction endpoints for parent/child writes.
+- **Phase 14:** analytics range hardening and complete AI usage/cost controls.
+- **Phase 15:** reminder delivery, health-provider synchronization, and PWA offline write synchronization.
+- **Phase 16:** production deployment, observability, abuse controls, backups, secret management, and operational hardening.
 
 ## Authentication reset limitation
 
@@ -48,6 +58,6 @@ Spring Boot password login cannot authenticate a migrated Supabase user until a 
 
 ## Cutover checklist and limitations
 
-Before production cutover, implement and test the missing resource APIs, per-user authorization, refresh-token revocation/expiry cleanup, password reset, account deletion/export, object retention/deletion, observability, rate limits, and backups/restore. Reconcile every frontend table query with an explicit versioned API contract. Add AI provider calls, timeouts, redaction, quotas, and cost controls before enabling AI. TLS, a secret manager, external durable Postgres/object storage, Redis policy, monitoring, and a deployment rollback plan are outside this local Compose configuration.
+Before production cutover, complete and test the Phase 12 security/ownership/error matrix, add password reset, account deletion/export, object retention/deletion, observability, rate limits, and backups/restore. Reconcile any future frontend operations against explicit versioned API contracts. Add production AI timeouts, redaction, quotas, and cost controls before enabling external providers. TLS, a secret manager, external durable Postgres/object storage, Redis policy, monitoring, and a deployment rollback plan are outside this local Compose configuration.
 
 The stack is suitable for local backend development only. A successful container start is not evidence of functional parity or a safe production migration.

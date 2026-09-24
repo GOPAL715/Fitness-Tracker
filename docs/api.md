@@ -4,7 +4,7 @@ Base URL: `http://localhost:8080/api/v1` locally. Production base URL and TLS ar
 
 ## Authentication and authorization
 
-`/api/v1/auth/**` and `/actuator/health` are public. All other endpoints require `Authorization: Bearer <access-token>`. Access JWTs expire after 15 minutes; refresh tokens expire after 30 days and rotate on refresh. Role claims are not currently enforced and no role-based endpoint is implemented.
+`/api/v1/auth/**`, `/actuator/health`, and `/api/v1/health` are public. All other endpoints require `Authorization: Bearer <access-token>`. Access JWTs expire after 15 minutes; refresh tokens expire after 30 days and rotate on refresh. Role claims are not currently enforced and no role-based endpoint is implemented.
 
 ## Endpoints
 
@@ -15,10 +15,14 @@ Base URL: `http://localhost:8080/api/v1` locally. Production base URL and TLS ar
 | POST | `/api/v1/auth/refresh` | No | `{ "refreshToken": "..." }` | Rotated token pair; prior refresh token is revoked. |
 | POST | `/api/v1/auth/logout` | No | `{ "refreshToken": "..." }` | Empty `200` response; revokes token when found. |
 | GET | `/api/v1/calendar/{date}` | Yes | ISO date, e.g. `2026-01-31` | `{ "date", "summary": { "workouts": 0, "meals": 0, "habits_completed": 0 } }` |
-| GET | `/api/v1/calendar/{from}/{to}` | Yes | Two inclusive ISO dates | One placeholder summary per date. |
-| POST | `/api/v1/food/scans` | Yes | Multipart field `image`; non-empty, at most 8 MiB; JPEG/PNG/WebP signature | `{ "status": "ready_to_review", "items": [], "image_path": "<jwt-subject>/<uuid>.<ext>" }` |
-| POST | `/api/v1/food/scans/validate` | Yes | Array of up to any number of detection objects | Accepted detections with finite values, capped at 12 results. Fields: `name`, `estimated_grams`, `confidence` (0..1), optional `calories`, macros, `sugar_g`, `sodium_mg`. |
-| POST | `/api/v1/coach/weekly-review` | Yes | Optional JSON object | `{ "review": "<fixed text>" }`; request data is currently ignored. |
+| GET | `/api/v1/calendar/{from}/{to}` | Yes | Two inclusive ISO dates, maximum 366 days | One persisted, owner-scoped summary per date |
+| POST | `/api/v1/food-scans` | Yes | Multipart field `file`; non-empty, at most 8 MiB; JPEG/PNG/WebP signature | Persisted review DTO with status and controlled-food items |
+| GET | `/api/v1/food-scans` | Yes | None | Owner-scoped scan list |
+| GET | `/api/v1/food-scans/{id}` | Yes | UUID scan ID | Owner-scoped scan DTO or 404 |
+| PUT | `/api/v1/food-scans/{id}/items` | Yes | Scan item corrections | Recalculated review DTO |
+| POST | `/api/v1/food-scans/{id}/confirm` | Yes | Optional meal metadata | Confirmed scan DTO and meal ID |
+| DELETE | `/api/v1/food-scans/{id}` | Yes | UUID scan ID | 204 after row and stored-object cleanup |
+| POST | `/api/v1/coach/weekly-review` | Yes | None or empty JSON | `{ "review": "<AI-provider response>" }`; factual context is assembled server-side. |
 | GET | `/actuator/health` | No | None | Spring health payload. |
 
 Example:
@@ -34,10 +38,19 @@ curl http://localhost:8080/api/v1/calendar/2026-01-31 \
 
 ## Errors and validation
 
-Handled argument errors return `400` with `{ "status", "error", "message" }`; missing entities return the same shape with `404`; other exceptions return a generic `500`. Authentication failures from Spring Security are not normalized into that JSON shape by the custom exception handler.
+Handled argument errors return `400`; missing entities return `404`; unauthorized requests return `401`,
+and denied authenticated requests return `403` through Spring Security. Other failures return a generic
+`500`. Authentication failures from Spring Security use the servlet error response rather than the custom
+JSON exception shape.
 
-Credential records have no bean-validation annotations, so email format, required fields, and password strength are not currently enforced. Invalid refresh tokens are reported as `400`. File validation checks byte signatures, not complete image decoding.
+Credential records are validated by the auth service, including required values and minimum password
+length. Scanner file validation checks declared MIME type, byte signature, and the 8 MiB limit; it does not
+fully decode images.
 
-## Contract gaps
+## Resource contract notes
 
-The frontend `apiData` adapter expects generic collection/item CRUD routes and Supabase-style query behavior. Examples include `/fitness-profile`, `/daily-metrics`, `/body-metrics`, `/workouts`, `/workout-sessions`, `/meals`, `/meal-items`, `/habits`, `/habit-logs`, `/goals`, `/exercises`, and `/foods`. They are not implemented. Supported filter/ordering combinations are also not defined by the backend. Treat this document as an inventory of actual routes, not a promise of frontend compatibility or production readiness.
+The Spring backend implements the active frontend resource matrix. Owned resources are exposed under the
+versioned `/api/v1` prefix and scoped by the JWT subject. Child resources use parent ownership checks.
+`exercises` and `foods` are readable catalogs and reject writes. Parent/child workflows may still require
+multiple requests; composite transaction endpoints are Phase 13 work. The Phase 12 security and rollback
+matrix remains future verification work, not a claim that every edge case is covered.

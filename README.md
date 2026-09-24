@@ -1,6 +1,6 @@
 # FitTrack AI
 
-A production-quality, multi-user fitness platform built with React, TypeScript, Vite and Supabase.
+A multi-user fitness platform built with React, TypeScript, Vite, Spring Boot, and PostgreSQL.
 
 FitTrack tracks training down to the individual set, nutrition down to the individual food item, daily
 health metrics, habits and goals — and turns all of it into explainable insights and AI-assisted coaching.
@@ -54,16 +54,15 @@ The app is organised around seven primary views:
               AI COACH
 ```
 
-React talks to Supabase Auth, the Postgres database, private Storage and Edge Functions. All AI
-provider calls happen inside Edge Functions so the API key never reaches the browser.
+The React application calls the Spring Boot REST API with JWT authentication. PostgreSQL is the system of record; private scan storage is server-managed.
 
 ---
 
 ## 3. Tech stack
 
 - **Frontend:** React 18, TypeScript (strict), Vite 5, hand-written CSS design system, lucide-react icons
-- **Backend:** Supabase — Postgres, Auth (email/password), Storage, Edge Functions (Deno)
-- **AI:** OpenAI vision model for food photos, text model for the weekly coach, called only server-side
+- **Backend:** Spring Boot 3.3, Java 21, PostgreSQL, Flyway
+- **AI:** Optional OpenAI-compatible provider invoked only by the backend
 
 ---
 
@@ -84,7 +83,8 @@ src/
     navigation/
       tabs.ts                tab ids, labels and icons
   lib/
-    supabase.ts              client, core record types, shared constants
+    api/                    versioned Spring Boot REST client
+    supabase.ts             historical type compatibility; not a runtime client
     types.ts                 types and constants for the upgraded feature tables
     auth.tsx                 AuthProvider + useAuth hook
     insights.ts              readiness, training load, streaks, insights, recommendations
@@ -140,23 +140,23 @@ npm run dev
 
 ## 6. Environment variables
 
-Frontend (safe to expose, used by the browser) — see `.env.example`:
+Frontend configuration (used by the browser) — see `.env.example`:
 
 ```
-VITE_SUPABASE_URL=
-VITE_SUPABASE_ANON_KEY=
+VITE_API_BASE_URL=http://localhost:8080/api/v1
 ```
 
-Server-side only (Edge Function secrets, **never** prefixed with `VITE_`):
+The frontend does not require Supabase URL or anon-key variables. Historical Supabase environment
+variables may remain in migration material only and must not be used to configure the active app.
+
+Backend configuration is supplied to Spring Boot through the environment or a secret manager. The
+optional AI provider is configured on the backend, never through a `VITE_` variable:
 
 ```
-OPENAI_API_KEY=          # required for the food scanner and the AI weekly coach
-AI_VISION_MODEL=         # optional, defaults to gpt-4o-mini
-AI_TEXT_MODEL=           # optional, defaults to gpt-4o-mini
+OPENAI_API_KEY=
+AI_VISION_MODEL=
+AI_TEXT_MODEL=
 ```
-
-`SUPABASE_URL`, `SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_ROLE_KEY` are injected into Edge Functions
-automatically by the platform.
 
 Without `OPENAI_API_KEY`, the app runs fully except for the two AI features, which return a clear
 "not configured" message instead of failing silently.
@@ -165,58 +165,48 @@ Without `OPENAI_API_KEY`, the app runs fully except for the two AI features, whi
 
 ## 7. Database migrations
 
-Applied through the migration tool, in this order:
+The active backend uses Flyway migrations in `backend/src/main/resources/db/migration`. The historical
+`supabase/migrations` directory is retained for reference and is not applied by the Spring backend.
 
-1. `create_fitness_tracker_core` — profile, daily metrics, workouts
-2. `extend_fittrack_ai_schema` — meals, body metrics, PRs, plan, devices, notifications
-3. `add_auth_and_user_scoped_rls` — `user_id` ownership columns, per-user uniqueness, owner-scoped RLS
-4. `create_exercise_library_sets_and_templates` — exercises, sessions, sets, templates, goals
-5. `create_food_database_habits_reminders_and_scanner` — foods, meal items, habits, reminders, scans, AI usage
-6. `create_food_image_storage_bucket` — private bucket and per-user storage policies
 
 ---
 
 ## 8. Authentication
 
-Supabase email/password. `AuthProvider` wraps the app, restores the session on load, and exposes
-`useAuth()`. The composition root renders `AuthScreen` when signed out and the application when signed in.
-Email confirmation is off, so a new account can sign in immediately. The `onAuthStateChange`
-callback does not await Supabase calls, avoiding the documented deadlock.
+Authentication uses the Spring Boot API: email/password registration and login return a short-lived JWT
+access token and a rotating opaque refresh token. The refresh token is stored by the client in localStorage
+for the current implementation; this is an acknowledged browser-security limitation. Password recovery,
+account recovery, and email verification are not implemented.
 
 ---
 
-## 9. RLS architecture
+## 9. Authorization architecture
 
-Every user-owned table has `user_id uuid DEFAULT auth.uid()` and four policies scoped to the
-`authenticated` role — one each for SELECT, INSERT, UPDATE and DELETE — all using `auth.uid() = user_id`.
+Spring Boot derives ownership from the JWT subject. The client does not provide `user_id` for ownership.
+Owned resources are scoped to the authenticated user in service queries; child resources prove ownership
+through their parent chain. Shared exercise and food catalogs are read-only. There is no active Supabase
+RLS layer in the Spring application.
 
-Child tables without their own `user_id` (`workout_exercises`, `exercise_sets`,
-`workout_template_exercises`, `meal_items`, `food_scan_items`) are scoped through their parent row
-with `EXISTS (... AND parent.user_id = auth.uid())`.
-
-Shared reference tables (`exercises`, `foods`) are readable by any authenticated user but read-only.
-
-`anon` holds no table privileges anywhere, so a signed-out request cannot read or write health data.
-
-The client never sends `user_id`; the database default fills it and the policy enforces it.
+The complete security/ownership acceptance matrix remains Phase 12 work.
 
 ---
 
 ## 10. Food scanner architecture
 
+The active scanner is implemented by `ScannerController` and `ScannerService` in Spring Boot:
+
 ```
-upload photo -> validate MIME + size -> compress client-side -> private Storage
-  -> create food_scans row (pending)
-  -> Edge Function analyze-food-photo
-  -> vision model returns names + grams + confidence (JSON only)
-  -> server validates the response shape strictly
-  -> each name matched against the `foods` table
-  -> nutrition computed deterministically from per-100g values
-  -> results shown with confidence labels
-  -> user edits food / portion / adds / deletes
-  -> confirm -> meals + meal_items rows
-  -> scan marked confirmed and linked to the meal
+multipart file upload -> MIME/signature/size validation -> private owner-scoped storage
+  -> persisted food_scan row
+  -> backend AiProvider analysis and validation
+  -> controlled food matching and server-side nutrition calculation
+  -> user corrections through PUT /food-scans/{id}/items
+  -> transactional confirmation creates meals and meal_items
+  -> deletion removes the scan and stored object
 ```
+
+The historical `supabase/functions/analyze-food-photo` implementation is retained as migration reference;
+it is not called by the React runtime.
 
 Key properties:
 
@@ -230,16 +220,10 @@ Key properties:
 
 ## 11. AI architecture
 
-Both AI features are Edge Functions:
-
-- **`analyze-food-photo`** — verifies the caller from their token, checks the scan belongs to them,
-  signs a short-lived URL for the private image, calls the vision model, validates the JSON, resolves
-  nutrition server-side, and records usage in `ai_usage`.
-- **`weekly-coach`** — reads the caller's last 7 days, computes all statistics server-side, sends only
-  that summary to the model, normalises the response, stores the review as a notification, and records
-  usage. If there is not enough data it returns an explicit error rather than inventing a report.
-
-Neither function trusts a user id from the request body, and neither exposes the API key.
+The active backend exposes `/api/v1/coach/analyze` and `/api/v1/coach/weekly-review` through an
+`AiProvider` abstraction. Provider configuration and usage accounting are backend concerns; the browser
+never receives an API key. Complete AI usage accounting, provider quotas, and production error controls
+remain Phase 14 work.
 
 ---
 
@@ -272,8 +256,8 @@ npm run preview  # preview the production build
 npm run test
 ```
 
-Not covered by automated tests: database RLS behaviour (worth an integration suite against a
-real Supabase instance), the live AI provider call, and any UI rendering.
+Not covered by the frontend unit suite: live AI provider calls and UI rendering. Backend acceptance
+coverage is documented in the backend test reports.
 
 ## 14. Deployment
 
@@ -283,18 +267,20 @@ back to `index.html` (`dist/_redirects` is included for that).
 ## 15. Troubleshooting
 
 - **"FitTrack could not load your data"** — the database or network is unreachable; use Try again.
-- **"AI analysis is not configured"** — `OPENAI_API_KEY` is not set for the Edge Functions.
+- **"AI analysis is not configured"** — the backend AI provider is not configured.
 - **Empty screens after signing in** — expected for a brand new account; log data or use the
   seeded demo account.
 - **Photo upload rejected** — only JPEG, PNG and WebP under 8 MB are accepted.
 
 ## 16. Security notes
 
-- No secret is ever exposed to the browser; only `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`.
-- The service-role key exists only inside Edge Functions.
-- Storage is a private bucket with per-user folder policies.
-- RLS is enabled on every table with owner-scoped policies; `anon` is denied everywhere.
-- The Supabase security advisor reports zero findings.
+- No secret is exposed through the frontend; backend secrets remain server-side.
+- Scan objects are stored privately and scoped to the authenticated owner.
+- Catalog writes are not exposed.
+- CORS is restricted to the configured local frontend origins in `SecurityConfig`; production origins must
+  be explicitly reviewed and configured.
+- Current limitations include localStorage token storage, no password recovery, no explicit rate limiting
+  or lockout, and no production abuse controls.
 
 ## 17. Known limitations
 
@@ -319,9 +305,9 @@ authorization. I chose not to stub these rather than ship a facade.
 **No visual verification.** I verified the build, types and business logic, but I have no browser tool in
 this environment, so no screen has been clicked through. If something looks wrong, tell me and I will fix it.
 
-**Views still own their writes.** Reads are centralised in `features/appData`, but mutations
-(templates, meals, habits, goals, profile, sessions) still call Supabase from within the views.
-Extracting those into feature-scoped mutation modules is the next structural step.
+**Mutations use the Spring REST API.** Reads are centralized in `features/appData`; mutation modules call
+versioned `/api/v1` resources. Some workflows still make multiple HTTP requests for parent/child writes;
+composite transaction endpoints remain Phase 13 work.
 
 **Every mutation refetches everything.** `useAppData.reload()` re-reads all 20 queries after any change.
 Simple and always correct, but more work than a targeted refresh.

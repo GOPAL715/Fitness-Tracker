@@ -1,15 +1,15 @@
-﻿# FitTrack Spring Boot architecture
+# FitTrack Spring Boot architecture
 
 ## Overview
 
-The target architecture replaces direct browser access to Supabase with a React single-page app calling a Spring Boot API. PostgreSQL is the system of record. The repository is mid-transition: the HTTP client and a small Spring API exist, but the backend does not implement the generic CRUD surface used by most frontend screens.
+The active architecture is React + TypeScript/Vite calling a versioned Spring Boot REST API. PostgreSQL is the system of record.
 
 ```text
 React SPA --Bearer JWT--> Spring Boot :8080
                                   |--> PostgreSQL 16 (Flyway schema)
                                   |--> private image volume (scan uploads)
-                                  |--> OpenAI-compatible API (configured, not called)
-                                  +--> Redis (provided; not used by Java yet)
+                                  |--> OpenAI-compatible API (optional backend provider)
+                                  +--> Redis (provided; no active Java behavior yet)
 ```
 
 Supabase Edge Functions and direct browser access remain as legacy/reference code. They are not part of the Compose deployment.
@@ -20,28 +20,35 @@ Supabase Edge Functions and direct browser access remain as legacy/reference cod
 - Stateless Spring Security with BCrypt password hashing, signed HS256 JWT access tokens, and opaque refresh tokens stored as SHA-256 hashes in PostgreSQL.
 - Public auth and health endpoints; all other routes require a bearer access token.
 - Flyway creates and Hibernate validates 28 tables for fitness, workouts, nutrition, habits, goals, devices, and coach data.
-- Calendar routes return zero placeholder summaries and do not query those tables.
-- Scan upload validates size and magic bytes, then writes under the JWT subject in private storage. AI recognition and scan persistence are not implemented.
-- Weekly review accepts metrics but returns fixed text. AI configuration is not used by current service code.
+- Calendar routes return persisted user-scoped daily summaries.
+- Scan upload validates size and magic bytes, stores files under the JWT subject, persists scans, and supports correction/confirmation/deletion.
+- Coach endpoints load backend-generated user facts and delegate narrative generation to the configured AI provider.
 - Handled argument/not-found exceptions map to generic 400/404 responses; other failures become a generic 500.
 
-Redis is included for a future rate-limit, cache, or revocation design, but the application has no Redis client or runtime Redis behavior. It must not be described as an active session or resilience store.
+Redis is provisioned for future cache/rate-limit/revocation design, but the application has no Redis client or runtime Redis behavior. It must not be described as an active session or resilience store.
 
 ## Authorization
 
-`/api/v1/auth/**` and `/actuator/health` are public. Other requests require a signed, unexpired JWT whose subject is the user UUID. Scan path construction uses that subject and checks normalized path containment.
-
-This is route authentication, not complete object authorization. Roles are stored and included in JWTs but are not enforced. No method-level ownership checks exist for future CRUD operations. Production queries must derive `user_id` from the authenticated principal on every user-owned request and test horizontal access denial.
+`/api/v1/auth/**`, `/actuator/health`, and the configured health endpoint are public. Other requests require
+a signed, unexpired JWT whose subject is the user UUID. Owned-resource services derive `user_id` from
+that subject, reject client-supplied ownership fields, and verify child resources through their parent
+chain. Scanner paths and rows are owner-scoped. Catalog resources (`exercises` and `foods`) are read-only.
+Phase 12 will expand the executable security and ownership verification matrix.
 
 ## Frontend boundary
 
-The client targets `VITE_API_BASE_URL`, defaulting to `http://localhost:8080/api`, stores tokens in local storage, retries once after refresh, and accepts camelCase or snake_case token fields. Jackson uses snake case for the existing frontend types.
-
-The generic frontend adapter expects routes such as `/fitness-profile`, `/daily-metrics`, `/workouts`, `/meals`, `/habits`, and `/goals`. Those endpoints do not exist. See [backend-migration.md](backend-migration.md) and [api.md](api.md).
+The client targets `VITE_API_BASE_URL`, defaulting to `http://localhost:8080/api/v1`, stores tokens in
+local storage, retries once after refresh, and accepts camelCase or snake_case token fields. Jackson
+uses snake case for the existing frontend types. The frontend uses explicit versioned REST modules; the
+remaining generic adapter behavior is limited to the resource shapes currently used by the application,
+not arbitrary PostgREST query support.
 
 ## AI and storage
 
-The application reads AI URL, key, and model settings, but no service calls the provider. Scans are local files not connected to `food_scans` rows. Production still needs durable object storage, metadata persistence, scoped download/delete, stronger media validation, malware controls, retention/deletion, encryption, and AI timeouts/redaction/quotas/cost controls.
+The backend provides an `AiProvider` abstraction for scanner analysis and coach operations. Scanner
+uploads are persisted as scan rows and private owner-scoped files; correction, confirmation, deletion,
+and cleanup are implemented. Provider-specific production timeouts, redaction, quotas, cost controls,
+and durable managed object storage remain future work.
 
 ## Local Docker deployment
 
@@ -57,4 +64,7 @@ Configuration uses `${VAR:-local-default}` substitutions. Embedded database and 
 
 ## Testing
 
-Run backend tests with `mvn test` in `backend`; current coverage only checks scanner signatures. Tests use H2, disable Flyway, and use Hibernate create-drop. Run frontend `npm test` and `npm run build`. There are no end-to-end, real-Postgres migration, authorization, refresh-rotation, storage, Redis, or live-AI integration tests. A healthy container does not demonstrate frontend/API parity.
+Run backend tests with `mvn -f backend/pom.xml clean test`; the Testcontainers PostgreSQL acceptance
+suite executes Flyway and Spring Boot HTTP flows. The current verified backend baseline is 13 tests passed.
+Run frontend `npm run test` and `npm run build`. Phase 12 still needs expanded refresh, ownership,
+scanner rollback, and HTTP error-contract coverage.

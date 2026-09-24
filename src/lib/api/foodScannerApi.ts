@@ -13,5 +13,4 @@ export async function scanFood(file: Blob) {
   return apiClient<FoodScan>("/food-scans", { method: "POST", body: form });
 }
 export const analyzeFoodPhoto = scanFood;
-export const validateFoodScan = (items: unknown[]) => apiClient("/food-scans/validate", { method: "POST", ...json({ items }) });
 export const confirmFoodScan = (scanId: string, payload: unknown) => apiClient(`/food-scans/${scanId}/confirm`, { method: "POST", ...json(payload) });
