@@ -100,8 +100,8 @@ public class ScannerService {
         if (!Set.of("BREAKFAST", "LUNCH", "DINNER", "SNACK").contains(mealType)) throw bad("Invalid meal type");
         jdbc.update("INSERT INTO meals(id,user_id,meal_date,meal_type,name,source,calories,protein_g,carbs_g,fat_g) VALUES (?,?,?,?,?,?,?,?,?,?)",
             meal, user, date, mealType, request.mealName() == null ? "Scanned meal" : request.mealName().trim(), "food_scan", scan.totalCalories(), scan.totalProteinG(), scan.totalCarbsG(), scan.totalFatG());
-        for (ItemView item : scan.items()) jdbc.update("INSERT INTO meal_items(id,user_id,meal_id,food_id,food_name,quantity,grams,calories,protein_g,carbs_g,fat_g,fiber_g,sugar_g,sodium_mg,source) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,'food_scan')",
-            UUID.randomUUID(), user, meal, item.foodId(), item.name(), item.grams(), item.grams(), item.calories(), item.proteinG(), item.carbsG(), item.fatG(), item.fiberG(), item.sugarG(), item.sodiumMg());
+        for (ItemView item : scan.items()) jdbc.update("INSERT INTO meal_items(id,meal_id,food_id,food_name,quantity,grams,calories,protein_g,carbs_g,fat_g,fiber_g,source) VALUES (?,?,?,?,?,?,?,?,?,?,?,'food_scan')",
+            UUID.randomUUID(), meal, item.foodId(), item.name(), item.grams(), item.grams(), item.calories(), item.proteinG(), item.carbsG(), item.fatG(), item.fiberG());
         int changed = jdbc.update("UPDATE food_scans SET status='confirmed',meal_id=? WHERE id=? AND user_id=? AND status='completed'", meal, id, user);
         if (changed != 1) throw new ResponseStatusException(HttpStatus.CONFLICT, "Scan was already confirmed");
         return get(id, principal);

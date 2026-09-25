@@ -75,14 +75,14 @@ public class OwnedResourceService {
         String predicate;
         if (spec.scope() == Scope.USER) {
             params.addValue("uid", uuid(user, "user id"));
-            predicate = "t." + USER_ID + "=:uid AND t.id=:id";
+            predicate = " WHERE t." + USER_ID + "=:uid AND t.id=:id";
         } else if (spec.scope() == Scope.CATALOG) {
-            predicate = "t.id=:id";
+            predicate = " WHERE t.id=:id";
         } else {
             params.addValue("uid", uuid(user, "user id"));
             predicate = childJoin(spec.scope()) + "t.id=:id";
         }
-        return jdbc.queryForList("SELECT t.* FROM " + spec.table() + " t WHERE " + predicate, params)
+        return jdbc.queryForList("SELECT t.* FROM " + spec.table() + " t" + predicate, params)
             .stream().findFirst().orElseThrow(() -> new NoSuchElementException("Resource not found"));
     }
 
@@ -167,7 +167,15 @@ public class OwnedResourceService {
             if (USER_ID.equals(name)) throw new IllegalArgumentException("user_id is server controlled");
             if ("id".equals(name)) continue;
             if (!spec.columns().contains(name)) throw new IllegalArgumentException("Unsupported field: " + name);
-            result.put(name, name.endsWith("_id") && entry.getValue() instanceof String text ? uuid(text, name) : entry.getValue());
+            Object value = entry.getValue();
+            if (name.endsWith("_date") || name.equals("metric_date") || name.equals("achieved_date") || name.equals("log_date") || name.equals("start_date") || name.equals("target_date")) {
+                if (value instanceof String text) value = java.time.LocalDate.parse(text);
+            } else if (name.endsWith("_lb") || name.endsWith("_g") || name.endsWith("_value") || name.endsWith("_miles") || name.endsWith("_minutes") || name.endsWith("_calories") || name.endsWith("_steps") || name.endsWith("_oz") || name.endsWith("_hours") || name.endsWith("_reps") || name.endsWith("_weight")) {
+                if (value instanceof String text) value = new java.math.BigDecimal(text);
+            } else if (name.endsWith("_completed") || name.endsWith("_active") || name.endsWith("_enabled") || name.endsWith("_read") || name.endsWith("_favorite")) {
+                if (value instanceof String text) value = Boolean.valueOf(text);
+            }
+            result.put(name, name.endsWith("_id") && value instanceof String text ? uuid(text, name) : value);
         }
         if (creating && result.isEmpty()) throw new IllegalArgumentException("At least one field is required");
         return result;
