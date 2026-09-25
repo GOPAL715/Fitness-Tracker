@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { Plus, Play, Trash2, Copy, Star, Search, X, ClipboardList } from "lucide-react";
 import { apiData, WORKOUT_TYPES } from "../lib/api/dataAdapter";
+import { completeWorkoutTemplate } from "../lib/api/workoutApi";
 import type { Exercise, WorkoutTemplate, TemplateExercise } from "../lib/types";
 import { EmptyState, Modal, SectionHeader } from "../components/ui";
 import { templateSummary } from "../lib/workoutMetrics";
@@ -73,42 +74,29 @@ export default function TemplatesView({ templates, exercises, onRefresh, onStart
     setSaving(true);
     setError(null);
 
-    if (editing) {
-      const { error: updateError } = await apiData
-        .from("workout_templates")
-        .update({
-          name: form.name.trim(),
-          description: form.description.trim(),
-          workout_type: form.workout_type,
-          estimated_minutes: Number(form.estimated_minutes),
-        })
-        .eq("id", editing.id);
-      if (updateError) {
-        setSaving(false);
-        setError("That template could not be updated.");
-        return;
+    try {
+      if (editing) {
+        const { error: updateError } = await apiData
+          .from("workout_templates")
+          .update({
+            name: form.name.trim(),
+            description: form.description.trim(),
+            workout_type: form.workout_type,
+            estimated_minutes: Number(form.estimated_minutes),
+          })
+          .eq("id", editing.id);
+        if (updateError) {
+          setSaving(false);
+          setError("That template could not be updated.");
+          return;
+        }
+        await apiData.from("workout_template_exercises").delete().eq("template_id", editing.id);
+        await insertItems(editing.id);
+      } else {
+        const payload = { template: { name: form.name.trim(), description: form.description.trim(), workout_type: form.workout_type, estimated_minutes: Number(form.estimated_minutes), favorite: false }, exercises: picked.map((p, i) => ({ exercise_id: p.exercise.id, order_index: i, target_sets: Number(p.target_sets) || 3, target_reps: p.target_reps || '8-12', target_weight: null })) };
+        await completeWorkoutTemplate(payload);
       }
-      await apiData.from("workout_template_exercises").delete().eq("template_id", editing.id);
-      await insertItems(editing.id);
-    } else {
-      const { data: created, error: createError } = await apiData
-        .from("workout_templates")
-        .insert({
-          name: form.name.trim(),
-          description: form.description.trim(),
-          workout_type: form.workout_type,
-          estimated_minutes: Number(form.estimated_minutes),
-        })
-        .select("id")
-        .maybeSingle();
-      if (createError || !created) {
-        setSaving(false);
-        setError("That template could not be saved.");
-        return;
-      }
-      await insertItems(created.id);
-    }
-
+    } catch { setSaving(false); setError('That template could not be saved.'); return; }
     setSaving(false);
     setEditorOpen(false);
     onRefresh();
@@ -343,6 +331,3 @@ export default function TemplatesView({ templates, exercises, onRefresh, onStart
     </div>
   );
 }
-
-
-

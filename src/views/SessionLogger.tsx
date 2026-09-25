@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { Plus, Trash2, Search, Dumbbell, Save, X } from "lucide-react";
-import { apiData, WORKOUT_TYPES } from "../lib/api/dataAdapter";
+import { WORKOUT_TYPES } from "../lib/api/dataAdapter";
+import { completeWorkoutSession } from "../lib/api/workoutApi";
 import type { Exercise } from "../lib/types";
 import { Modal } from "../components/ui";
 import { estimateOneRepMax } from "../lib/workoutMetrics";
@@ -109,54 +110,21 @@ export default function SessionLogger({ exercises, onClose, onSaved, initialTitl
     setSaving(true);
     setError(null);
 
-    const { data: session, error: sessionError } = await apiData
-      .from("workout_sessions")
-      .insert({
-        title: title.trim(),
-        workout_type: workoutType,
-        duration_minutes: Math.max(10, totals.sets * 3),
-        perceived_effort: Number(effort) || 6,
-        notes: notes.trim() || null,
-        completed: true,
-        completed_at: new Date().toISOString(),
-      })
-      .select("id")
-      .maybeSingle();
-
-    if (sessionError || !session) {
+    try {
+      await completeWorkoutSession({
+        session: { title: title.trim(), workout_type: workoutType, duration_minutes: Math.max(10, totals.sets * 3), perceived_effort: Number(effort) || 6, notes: notes.trim() || null, completed: true },
+        exercises: usable.map((d, i) => ({ exercise_id: d.exercise.id, order_index: i, notes: null, sets: d.sets.filter((s) => Number(s.reps) > 0 || Number(s.weight) > 0).map((s, idx) => ({ set_number: idx + 1, reps: Number(s.reps) > 0 ? Number(s.reps) : null, weight: Number(s.weight) > 0 ? Number(s.weight) : null, rpe: Number(s.rpe) > 0 ? Number(s.rpe) : null, completed: true })) }))
+      });
+    } catch {
       setSaving(false);
       setError("That session could not be saved. Please try again.");
       return;
-    }
-
-    for (let i = 0; i < usable.length; i++) {
-      const d = usable[i];
-      const { data: we, error: weError } = await apiData
-        .from("workout_exercises")
-        .insert({ workout_session_id: session.id, exercise_id: d.exercise.id, order_index: i })
-        .select("id")
-        .maybeSingle();
-      if (weError || !we) continue;
-
-      const rows = d.sets
-        .filter((s) => Number(s.reps) > 0 || Number(s.weight) > 0)
-        .map((s, idx) => ({
-          workout_exercise_id: we.id,
-          set_number: idx + 1,
-          reps: Number(s.reps) > 0 ? Number(s.reps) : null,
-          weight: Number(s.weight) > 0 ? Number(s.weight) : null,
-          rpe: Number(s.rpe) > 0 ? Number(s.rpe) : null,
-          completed: true,
-        }));
-
-      if (rows.length) await apiData.from("exercise_sets").insert(rows);
     }
 
     setSaving(false);
     onSaved();
     onClose();
   }
-
   return (
     <Modal title="Log a workout" onClose={onClose}>
       <div className="flex-col" style={{ gap: 16 }}>

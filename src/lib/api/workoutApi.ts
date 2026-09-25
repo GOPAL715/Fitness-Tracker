@@ -13,4 +13,6 @@ export const workoutSessionsApi = resourceApi<unknown>("workout-sessions");
 export const workoutTemplatesApi = resourceApi<unknown>("workout-templates");
 export const workoutTemplateExercisesApi = resourceApi<unknown>("workout-template-exercises");
 export const exerciseSetsApi = resourceApi<unknown>("exercise-sets");
+export const completeWorkoutSession = (payload: unknown) => apiClient("/workout-sessions/complete", { method: "POST", ...json(payload) });
+export const completeWorkoutTemplate = (payload: unknown) => apiClient("/workout-templates/complete", { method: "POST", ...json(payload) });
 export const planSessionsApi = resourceApi<unknown>("plan-sessions");

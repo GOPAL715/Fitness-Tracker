@@ -6,3 +6,4 @@ export const createMeal = (payload: unknown) => apiClient(resource, { method: "P
 export const updateMeal = (id: string, payload: unknown) => apiClient(`${resource}/${id}`, { method: "PUT", ...json(payload) });
 export const deleteMeal = (id: string) => apiClient<void>(`${resource}/${id}`, { method: "DELETE" });
 export const createMealItems = (mealId: string, items: unknown[]) => apiClient("/meal-items", { method: "POST", ...json({ mealId, items }) });
+export const completeMeal = (payload: unknown) => apiClient("/meals/complete", { method: "POST", ...json(payload) });

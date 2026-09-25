@@ -30,6 +30,7 @@ import io.jsonwebtoken.security.Keys;
 import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
 import org.springframework.beans.factory.annotation.Value;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -298,6 +299,366 @@ class AcceptanceHttpTest {
     }
     @Test void childOwnershipMatrixIsComplete() throws Exception {
         Session a=registerSession("child-a-");Session b=registerSession("child-b-");UUID catalog=UUID.randomUUID();jdbc.update("insert into exercises(id,name) values (?,?)",catalog,"Exercise");UUID workout=UUID.randomUUID(),session=UUID.randomUUID(),we=UUID.randomUUID(),set=UUID.randomUUID(),template=UUID.randomUUID(),te=UUID.randomUUID(),meal=UUID.randomUUID(),mi=UUID.randomUUID(),habit=UUID.randomUUID(),log=UUID.randomUUID(),scan=UUID.randomUUID(),si=UUID.randomUUID();jdbc.update("insert into workouts(id,user_id,title) values (?,?::uuid,'W')",workout,a.id());jdbc.update("insert into workout_sessions(id,user_id,title) values (?,?::uuid,'S')",session,a.id());jdbc.update("insert into workout_exercises(id,workout_session_id,exercise_id) values (?,?,?)",we,session,catalog);jdbc.update("insert into exercise_sets(id,workout_exercise_id,set_number) values (?,?,1)",set,we);jdbc.update("insert into workout_templates(id,user_id,name) values (?,?::uuid,'T')",template,a.id());jdbc.update("insert into workout_template_exercises(id,template_id,exercise_id) values (?,?,?)",te,template,catalog);jdbc.update("insert into meals(id,user_id,name,source) values (?,?::uuid,'M','manual')",meal,a.id());jdbc.update("insert into meal_items(id,meal_id,food_name,grams) values (?,?,?,100)",mi,meal,"Food");jdbc.update("insert into habits(id,user_id,name) values (?,?::uuid,'H')",habit,a.id());jdbc.update("insert into habit_logs(id,user_id,habit_id,log_date,completed) values (?,?::uuid,?,current_date,true)",log,a.id(),habit);jdbc.update("insert into food_scans(id,user_id,status) values (?,?::uuid,'completed')",scan,a.id());jdbc.update("insert into food_scan_items(id,scan_id,food_name,confirmed_grams) values (?,?,?,100)",si,scan,"Food");String[][] children={{"workout-exercises",we.toString()},{"exercise-sets",set.toString()},{"workout-template-exercises",te.toString()},{"meal-items",mi.toString()},{"habit-logs",log.toString()},{"food-scan-items",si.toString()}};for(String[] c:children){String path="/api/v1/"+c[0]+"/"+c[1];mvc.perform(get(path).header("Authorization","Bearer "+b.access())).andExpect(status().isNotFound());mvc.perform(put(path).header("Authorization","Bearer "+b.access()).contentType(MediaType.APPLICATION_JSON).content("{}")).andExpect(status().isNotFound());mvc.perform(delete(path).header("Authorization","Bearer "+b.access())).andExpect(status().isNotFound());}
+    }
+
+    @Test void compositeSessionRollsBackInvalidCatalogReference() throws Exception {
+        Session owner=registerSession("composite-session-"); UUID ex=UUID.randomUUID(); jdbc.update("insert into exercises(id,name) values (?,?)",ex,"Exercise");
+        String body=mapper.writeValueAsString(Map.of("session",Map.of("title","Session","workout_type","Strength","duration_minutes",10,"perceived_effort",7,"completed",true),"exercises",java.util.List.of(Map.of("exercise_id",ex,"order_index",0,"sets",java.util.List.of(Map.of("set_number",1,"reps",8,"weight",100,"completed",true))))));
+        mvc.perform(post("/api/v1/workout-sessions/complete").header("Authorization","Bearer "+owner.access()).contentType(MediaType.APPLICATION_JSON).content(body)).andExpect(status().isOk());
+        UUID bad=UUID.randomUUID(); String invalid=body.replace(ex.toString(),bad.toString());
+        mvc.perform(post("/api/v1/workout-sessions/complete").header("Authorization","Bearer "+owner.access()).contentType(MediaType.APPLICATION_JSON).content(invalid)).andExpect(status().isNotFound());
+        assertThat(jdbc.queryForObject("select count(*) from workout_sessions where user_id=?::uuid and title='Session'",Integer.class,owner.id()),is(1));
+    }
+
+    @Test void compositeTemplateAndMealRollbackOnMissingCatalogReference() throws Exception {
+        Session owner=registerSession("composite-other-"); UUID ex=UUID.randomUUID(); jdbc.update("insert into exercises(id,name) values (?,?)",ex,"Exercise");
+        String session = mapper.writeValueAsString(Map.of("session", Map.of("title", "Session2", "workout_type", "Strength", "duration_minutes", 10, "perceived_effort", 7, "completed", true), "exercises", java.util.List.of(Map.of("exercise_id", ex, "order_index", 0, "sets", java.util.List.of(Map.of("set_number", 1, "reps", 8, "completed", true))))));
+        mvc.perform(post("/api/v1/workout-sessions/complete").header("Authorization","Bearer "+owner.access()).contentType(MediaType.APPLICATION_JSON).content(session)).andExpect(status().isOk());
+        String template=mapper.writeValueAsString(Map.of("template",Map.of("name","Template2","workout_type","Strength","estimated_minutes",30,"favorite",false),"exercises",java.util.List.of(Map.of("exercise_id",UUID.randomUUID(),"order_index",0,"target_sets",3,"target_reps","8-12"))));
+        mvc.perform(post("/api/v1/workout-templates/complete").header("Authorization","Bearer "+owner.access()).contentType(MediaType.APPLICATION_JSON).content(template)).andExpect(status().isNotFound());
+        assertThat(jdbc.queryForObject("select count(*) from workout_templates where name='Template2'",Integer.class),is(0));
+        UUID food=UUID.randomUUID(); jdbc.update("insert into foods(id,name,serving_size,calories) values (?,?,100,100)",food,"Food");
+        String meal=mapper.writeValueAsString(Map.of("meal",Map.of("meal_date",LocalDate.now().toString(),"meal_type","LUNCH","name","Meal2","source","manual"),"items",java.util.List.of(Map.of("food_id",food,"grams",100,"quantity",1))));
+        mvc.perform(post("/api/v1/meals/complete").header("Authorization","Bearer "+owner.access()).contentType(MediaType.APPLICATION_JSON).content(meal)).andExpect(status().isOk());
+        String invalidMeal=meal.replace(food.toString(),UUID.randomUUID().toString());
+        mvc.perform(post("/api/v1/meals/complete").header("Authorization","Bearer "+owner.access()).contentType(MediaType.APPLICATION_JSON).content(invalidMeal)).andExpect(status().isNotFound());
+        assertThat(jdbc.queryForObject("select count(*) from meals where name='Meal2'",Integer.class),is(1));
+    }
+
+    @Test void compositeUserIdIsNeverUsedForOwnership() throws Exception {
+        Session a=registerSession("composite-owner-"); Session b=registerSession("composite-other-owner-"); UUID ex=UUID.randomUUID(); jdbc.update("insert into exercises(id,name) values (?,?)",ex,"Exercise");
+        String body=mapper.writeValueAsString(Map.of("user_id",b.id(),"session",Map.of("title","Owned","workout_type","Strength","duration_minutes",10,"perceived_effort",7,"completed",true),"exercises",java.util.List.of(Map.of("exercise_id",ex,"order_index",0,"sets",java.util.List.of(Map.of("set_number",1,"reps",8,"completed",true))))));
+        mvc.perform(post("/api/v1/workout-sessions/complete").header("Authorization","Bearer "+a.access()).contentType(MediaType.APPLICATION_JSON).content(body)).andExpect(status().isOk());
+        assertThat(jdbc.queryForObject("select count(*) from workout_sessions where user_id=?::uuid and title='Owned'",Integer.class,a.id()),is(1));
+        assertThat(jdbc.queryForObject("select count(*) from workout_sessions where user_id=?::uuid and title='Owned'",Integer.class,b.id()),is(0));
+}
+
+
+    private Map<String, Integer> compositeCounts() {
+        return Map.of(
+                "workout_sessions", jdbc.queryForObject("select count(*) from workout_sessions", Integer.class),
+                "workout_exercises", jdbc.queryForObject("select count(*) from workout_exercises", Integer.class),
+                "exercise_sets", jdbc.queryForObject("select count(*) from exercise_sets", Integer.class),
+                "workout_templates", jdbc.queryForObject("select count(*) from workout_templates", Integer.class),
+                "workout_template_exercises", jdbc.queryForObject("select count(*) from workout_template_exercises", Integer.class),
+                "meals", jdbc.queryForObject("select count(*) from meals", Integer.class),
+                "meal_items", jdbc.queryForObject("select count(*) from meal_items", Integer.class));
+    }
+
+    private void assertNoCompositeGrowth(Map<String, Integer> before) {
+        assertThat(compositeCounts(), is(before));
+    }
+
+    private void assertStructuredBadRequest(MvcResult result) throws Exception {
+        assertThat(result.getResponse().getStatus(), is(400));
+        JsonNode body = mapper.readTree(result.getResponse().getContentAsString());
+        assertThat(body.path("status").asInt(), is(400));
+        assertThat(body.path("error").asText(), is("Bad Request"));
+        assertThat(body.path("message").asText(), not(emptyString()));
+    }
+
+    @Test void compositeSessionSuccessPersistsExactGraph() throws Exception {
+        Session owner = registerSession("composite-session-success-");
+        UUID exercise = UUID.randomUUID();
+        jdbc.update("insert into exercises(id,name) values (?,?)", exercise, "Bench Press");
+        String body = mapper.writeValueAsString(Map.of(
+                "session", Map.of("title", "Explicit session", "workout_type", "Strength", "duration_minutes", 47, "perceived_effort", 8, "notes", "felt strong", "completed", true),
+                "exercises", List.of(Map.of("exercise_id", exercise, "order_index", 3, "notes", "left side", "sets", List.of(
+                        Map.of("set_number", 1, "reps", 8, "weight", "125.50", "rpe", "8.25", "completed", true),
+                        Map.of("set_number", 2, "reps", 6, "weight", "130.00", "rpe", "8.50", "completed", true))))));
+        MvcResult result = mvc.perform(post("/api/v1/workout-sessions/complete")
+                .header("Authorization", "Bearer " + owner.access()).contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.id").isNotEmpty()).andReturn();
+        UUID sessionId = UUID.fromString(mapper.readTree(result.getResponse().getContentAsString()).path("id").asText());
+        assertThat(jdbc.queryForObject("select count(*) from workout_sessions where title='Explicit session' and user_id=?::uuid", Integer.class, owner.id()), is(1));
+        Map<String, Object> session = jdbc.queryForMap("select user_id,title,workout_type,duration_minutes,perceived_effort,notes,completed,completed_at from workout_sessions where id=?", sessionId);
+        assertThat(session.get("user_id").toString(), is(owner.id()));
+        assertThat(session.get("title"), is((Object) "Explicit session"));
+        assertThat(session.get("workout_type"), is((Object) "Strength"));
+        assertThat(session.get("duration_minutes"), is((Object) 47));
+        assertThat(session.get("perceived_effort"), is((Object) 8));
+        assertThat(session.get("notes"), is((Object) "felt strong"));
+        assertThat(session.get("completed"), is((Object) true));
+        assertThat(session.get("completed_at"), is(notNullValue()));
+        List<Map<String, Object>> children = jdbc.queryForList("select id,workout_session_id,exercise_id,order_index,notes from workout_exercises where workout_session_id=? order by order_index", sessionId);
+        assertThat(children, hasSize(1));
+        UUID childId = (UUID) children.get(0).get("id");
+        assertThat(children.get(0).get("workout_session_id"), is((Object) sessionId));
+        assertThat(children.get(0).get("exercise_id"), is((Object) exercise));
+        assertThat(children.get(0).get("order_index"), is((Object) 3));
+        assertThat(children.get(0).get("notes"), is((Object) "left side"));
+        List<Map<String, Object>> sets = jdbc.queryForList("select set_number,reps,weight,rpe,completed from exercise_sets where workout_exercise_id=? order by set_number", childId);
+        assertThat(sets, hasSize(2));
+        assertThat(sets.get(0).get("set_number"), is((Object) 1));
+        assertThat(sets.get(0).get("reps"), is((Object) 8));
+        assertThat(((java.math.BigDecimal) sets.get(0).get("weight")).compareTo(new java.math.BigDecimal("125.50")), is(0));
+        assertThat(((java.math.BigDecimal) sets.get(0).get("rpe")).compareTo(new java.math.BigDecimal("8.25")), is(0));
+        assertThat(sets.get(0).get("completed"), is((Object) true));
+        assertThat(sets.get(1).get("set_number"), is((Object) 2));
+        assertThat(sets.get(1).get("reps"), is((Object) 6));
+        assertThat(((java.math.BigDecimal) sets.get(1).get("weight")).compareTo(new java.math.BigDecimal("130.00")), is(0));
+        assertThat(((java.math.BigDecimal) sets.get(1).get("rpe")).compareTo(new java.math.BigDecimal("8.50")), is(0));
+    }
+
+
+    @Test void compositeTemplateRollbackLeavesNoParentOrChildRows() throws Exception {
+        Session owner = registerSession("composite-template-rollback-");
+        UUID valid = UUID.randomUUID(), invalid = UUID.randomUUID();
+        jdbc.update("insert into exercises(id,name) values (?,?)", valid, "Valid exercise");
+        Map<String, Integer> before = compositeCounts();
+        Map<String, Object> body = objectMap(
+                "template", objectMap("name", "Rolled back template", "workout_type", "Strength", "estimated_minutes", 40, "favorite", false),
+                "exercises", java.util.List.of(
+                        objectMap("exercise_id", valid, "order_index", 0, "target_sets", 3, "target_reps", "8-12"),
+                        objectMap("exercise_id", invalid, "order_index", 1, "target_sets", 3, "target_reps", "8-12")));
+        MvcResult result = mvc.perform(post("/api/v1/workout-templates/complete")
+                .header("Authorization", "Bearer " + owner.access()).contentType(MediaType.APPLICATION_JSON).content(mapper.writeValueAsString(body))).andReturn();
+        assertThat(result.getResponse().getStatus(), is(404));
+        assertNoCompositeGrowth(before);
+    }
+
+    @Test void compositeMealSuccessPersistsExactGraphAndNutrition() throws Exception {
+        Session owner = registerSession("composite-meal-success-");
+        UUID food = UUID.randomUUID();
+        jdbc.update("insert into foods(id,name,serving_size,calories,protein_g,carbs_g,fat_g,fiber_g) values (?,?,?,?,?,?,?,?)",
+                food, "Chicken", 100, 250, 20, 30, 10, 5);
+        LocalDate mealDate = LocalDate.of(2026, 9, 25);
+        Map<String, Object> body = objectMap(
+                "meal", objectMap("meal_date", mealDate, "meal_type", "DINNER", "name", "Explicit meal", "source", "manual"),
+                "items", java.util.List.of(objectMap("food_id", food, "grams", "150.00", "quantity", "1.50")));
+        MvcResult result = mvc.perform(post("/api/v1/meals/complete")
+                .header("Authorization", "Bearer " + owner.access()).contentType(MediaType.APPLICATION_JSON).content(mapper.writeValueAsString(body)))
+                .andExpect(status().isOk()).andReturn();
+        UUID mealId = UUID.fromString(mapper.readTree(result.getResponse().getContentAsString()).path("id").asText());
+        assertThat(jdbc.queryForObject("select count(*) from meals where name='Explicit meal' and user_id=?::uuid", Integer.class, owner.id()), is(1));
+        Map<String, Object> parent = jdbc.queryForMap("select user_id,meal_date,meal_type,name,source,calories,protein_g,carbs_g,fat_g,fiber_g from meals where id=?", mealId);
+        assertThat(parent.get("user_id").toString(), is(owner.id()));
+        assertThat(parent.get("meal_date").toString(), is(mealDate.toString()));
+        assertThat(parent.get("meal_type"), is((Object) "DINNER"));
+        assertThat(parent.get("name"), is((Object) "Explicit meal"));
+        assertThat(parent.get("source"), is((Object) "manual"));
+        assertThat(((java.math.BigDecimal) parent.get("calories")).compareTo(new java.math.BigDecimal("375.00")), is(0));
+        assertThat(((java.math.BigDecimal) parent.get("protein_g")).compareTo(new java.math.BigDecimal("30.00")), is(0));
+        assertThat(((java.math.BigDecimal) parent.get("carbs_g")).compareTo(new java.math.BigDecimal("45.00")), is(0));
+        assertThat(((java.math.BigDecimal) parent.get("fat_g")).compareTo(new java.math.BigDecimal("15.00")), is(0));
+        assertThat(((java.math.BigDecimal) parent.get("fiber_g")).compareTo(new java.math.BigDecimal("7.50")), is(0));
+        List<Map<String, Object>> items = jdbc.queryForList("select meal_id,food_id,quantity,grams,calories,protein_g,carbs_g,fat_g,fiber_g from meal_items where meal_id=?", mealId);
+        assertThat(items, hasSize(1));
+        assertThat(items.get(0).get("meal_id"), is((Object) mealId));
+        assertThat(items.get(0).get("food_id"), is((Object) food));
+        assertThat(((java.math.BigDecimal) items.get(0).get("quantity")).compareTo(new java.math.BigDecimal("1.50")), is(0));
+        assertThat(((java.math.BigDecimal) items.get(0).get("grams")).compareTo(new java.math.BigDecimal("150.00")), is(0));
+        assertThat(((java.math.BigDecimal) items.get(0).get("calories")).compareTo(new java.math.BigDecimal("375.00")), is(0));
+        assertThat(((java.math.BigDecimal) items.get(0).get("protein_g")).compareTo(new java.math.BigDecimal("30.00")), is(0));
+        assertThat(((java.math.BigDecimal) items.get(0).get("carbs_g")).compareTo(new java.math.BigDecimal("45.00")), is(0));
+        assertThat(((java.math.BigDecimal) items.get(0).get("fat_g")).compareTo(new java.math.BigDecimal("15.00")), is(0));
+        assertThat(((java.math.BigDecimal) items.get(0).get("fiber_g")).compareTo(new java.math.BigDecimal("7.50")), is(0));
+    }
+
+    @Test void compositeMealRollbackLeavesNoParentOrChildRows() throws Exception {
+        Session owner = registerSession("composite-meal-rollback-");
+        UUID valid = UUID.randomUUID(), invalid = UUID.randomUUID();
+        jdbc.update("insert into foods(id,name,serving_size,calories,protein_g,carbs_g,fat_g,fiber_g) values (?,?,?,?,?,?,?,?)", valid, "Valid food", 100, 100, 10, 10, 5, 2);
+        Map<String, Integer> before = compositeCounts();
+        Map<String, Object> body = objectMap(
+                "meal", objectMap("meal_date", LocalDate.now(), "meal_type", "LUNCH", "name", "Rolled back meal", "source", "manual"),
+                "items", java.util.List.of(objectMap("food_id", valid, "grams", 100, "quantity", 1), objectMap("food_id", invalid, "grams", 100, "quantity", 1)));
+        MvcResult result = mvc.perform(post("/api/v1/meals/complete")
+                .header("Authorization", "Bearer " + owner.access()).contentType(MediaType.APPLICATION_JSON).content(mapper.writeValueAsString(body))).andReturn();
+        assertThat(result.getResponse().getStatus(), is(404));
+        assertNoCompositeGrowth(before);
+    }
+
+
+    private Map<String, Object> objectMap(Object... values) {
+        Map<String, Object> result = new java.util.LinkedHashMap<>();
+        for (int i = 0; i < values.length; i += 2) result.put(values[i].toString(), values[i + 1]);
+        return result;
+    }
+
+    @Test void compositeSessionRollbackLeavesNoGraphRows() throws Exception {
+        Session owner = registerSession("composite-session-rollback-");
+        UUID valid = UUID.randomUUID(), invalid = UUID.randomUUID();
+        jdbc.update("insert into exercises(id,name) values (?,?)", valid, "Valid exercise");
+        Map<String, Integer> before = compositeCounts();
+        Map<String, Object> body = objectMap(
+                "session", objectMap("title", "Rolled back session", "workout_type", "Strength", "duration_minutes", 30, "perceived_effort", 7, "completed", true),
+                "exercises", java.util.List.of(
+                        objectMap("exercise_id", valid, "order_index", 0, "sets", java.util.List.of(objectMap("set_number", 1, "reps", 8, "weight", 100, "completed", true))),
+                        objectMap("exercise_id", invalid, "order_index", 1, "sets", java.util.List.of(objectMap("set_number", 1, "reps", 8, "weight", 100, "completed", true)))));
+        MvcResult result = mvc.perform(post("/api/v1/workout-sessions/complete")
+                .header("Authorization", "Bearer " + owner.access()).contentType(MediaType.APPLICATION_JSON).content(mapper.writeValueAsString(body))).andReturn();
+        assertThat(result.getResponse().getStatus(), is(404));
+        assertNoCompositeGrowth(before);
+    }
+
+    @Test void compositeTemplateSuccessPersistsExactGraph() throws Exception {
+        Session owner = registerSession("composite-template-success-");
+        UUID first = UUID.randomUUID(), second = UUID.randomUUID();
+        jdbc.update("insert into exercises(id,name) values (?,?)", first, "Squat");
+        jdbc.update("insert into exercises(id,name) values (?,?)", second, "Row");
+        Map<String, Object> body = objectMap(
+                "template", objectMap("name", "Explicit template", "description", "Full body", "workout_type", "Strength", "estimated_minutes", 55, "favorite", true),
+                "exercises", java.util.List.of(
+                        objectMap("exercise_id", first, "order_index", 2, "target_sets", 4, "target_reps", "5-5", "target_weight", "225.00"),
+                        objectMap("exercise_id", second, "order_index", 3, "target_sets", 3, "target_reps", "8-12", "target_weight", "95.50")));
+        MvcResult result = mvc.perform(post("/api/v1/workout-templates/complete")
+                .header("Authorization", "Bearer " + owner.access()).contentType(MediaType.APPLICATION_JSON).content(mapper.writeValueAsString(body)))
+                .andExpect(status().isOk()).andReturn();
+        UUID templateId = UUID.fromString(mapper.readTree(result.getResponse().getContentAsString()).path("id").asText());
+        assertThat(jdbc.queryForObject("select count(*) from workout_templates where name='Explicit template' and user_id=?::uuid", Integer.class, owner.id()), is(1));
+        Map<String, Object> parent = jdbc.queryForMap("select user_id,name,description,workout_type,estimated_minutes,is_favorite from workout_templates where id=?", templateId);
+        assertThat(parent.get("user_id").toString(), is(owner.id()));
+        assertThat(parent.get("name"), is((Object) "Explicit template"));
+        assertThat(parent.get("description"), is((Object) "Full body"));
+        assertThat(parent.get("workout_type"), is((Object) "Strength"));
+        assertThat(parent.get("estimated_minutes"), is((Object) 55));
+        assertThat(parent.get("is_favorite"), is((Object) true));
+        List<Map<String, Object>> children = jdbc.queryForList("select template_id,exercise_id,order_index,target_sets,target_reps,target_weight from workout_template_exercises where template_id=? order by order_index", templateId);
+        assertThat(children, hasSize(2));
+        assertThat(children.get(0).get("template_id"), is((Object) templateId));
+        assertThat(children.get(0).get("exercise_id"), is((Object) first));
+        assertThat(children.get(0).get("order_index"), is((Object) 2));
+        assertThat(children.get(0).get("target_sets"), is((Object) 4));
+        assertThat(children.get(0).get("target_reps"), is((Object) "5-5"));
+        assertThat(((java.math.BigDecimal) children.get(0).get("target_weight")).compareTo(new java.math.BigDecimal("225.00")), is(0));
+        assertThat(children.get(1).get("template_id"), is((Object) templateId));
+        assertThat(children.get(1).get("exercise_id"), is((Object) second));
+        assertThat(children.get(1).get("order_index"), is((Object) 3));
+    }
+
+    @Test void compositeTwoUserIsolationKeepsSharedCatalogReferencesSafe() throws Exception {
+        Session a = registerSession("composite-isolation-a-");
+        Session b = registerSession("composite-isolation-b-");
+        UUID exercise = UUID.randomUUID();
+        UUID food = UUID.randomUUID();
+        jdbc.update("insert into exercises(id,name) values (?,?)", exercise, "Shared exercise");
+        jdbc.update("insert into foods(id,name,serving_size,calories,protein_g,carbs_g,fat_g,fiber_g) values (?,?,?,?,?,?,?,?)", food, "Shared food", 100, 100, 10, 10, 5, 2);
+        Map<String, Integer> before = compositeCounts();
+        String session = mapper.writeValueAsString(objectMap("session", objectMap("title", "A isolation session", "workout_type", "Strength", "duration_minutes", 20, "perceived_effort", 6, "completed", true), "exercises", List.of(objectMap("exercise_id", exercise, "order_index", 0, "sets", List.of(objectMap("set_number", 1, "reps", 8, "completed", true))))));
+        MvcResult sessionResult = mvc.perform(post("/api/v1/workout-sessions/complete").header("Authorization", "Bearer " + a.access()).contentType(MediaType.APPLICATION_JSON).content(session)).andExpect(status().isOk()).andReturn();
+        String sessionId = mapper.readTree(sessionResult.getResponse().getContentAsString()).path("id").asText();
+        String template = mapper.writeValueAsString(objectMap("template", objectMap("name", "A isolation template", "workout_type", "Strength", "estimated_minutes", 20, "favorite", false), "exercises", List.of(objectMap("exercise_id", exercise, "order_index", 0, "target_sets", 3, "target_reps", "8-12"))));
+        MvcResult templateResult = mvc.perform(post("/api/v1/workout-templates/complete").header("Authorization", "Bearer " + a.access()).contentType(MediaType.APPLICATION_JSON).content(template)).andExpect(status().isOk()).andReturn();
+        String templateId = mapper.readTree(templateResult.getResponse().getContentAsString()).path("id").asText();
+        String meal = mapper.writeValueAsString(objectMap("meal", objectMap("meal_date", LocalDate.now(), "meal_type", "SNACK", "name", "A isolation meal", "source", "manual"), "items", List.of(objectMap("food_id", food, "grams", 100, "quantity", 1))));
+        MvcResult mealResult = mvc.perform(post("/api/v1/meals/complete").header("Authorization", "Bearer " + a.access()).contentType(MediaType.APPLICATION_JSON).content(meal)).andExpect(status().isOk()).andReturn();
+        String mealId = mapper.readTree(mealResult.getResponse().getContentAsString()).path("id").asText();
+        assertThat(jdbc.queryForObject("select user_id from workout_sessions where id=?", UUID.class, UUID.fromString(sessionId)).toString(), is(a.id()));
+        assertThat(jdbc.queryForObject("select user_id from workout_templates where id=?", UUID.class, UUID.fromString(templateId)).toString(), is(a.id()));
+        assertThat(jdbc.queryForObject("select user_id from meals where id=?", UUID.class, UUID.fromString(mealId)).toString(), is(a.id()));
+        assertThat(jdbc.queryForObject("select count(*) from workout_sessions where user_id=?::uuid", Integer.class, b.id()), is(0));
+        assertThat(jdbc.queryForObject("select count(*) from workout_templates where user_id=?::uuid", Integer.class, b.id()), is(0));
+        assertThat(jdbc.queryForObject("select count(*) from meals where user_id=?::uuid", Integer.class, b.id()), is(0));
+        assertThat(jdbc.queryForObject("select count(*) from exercises where id=?", Integer.class, exercise), is(1));
+        assertThat(jdbc.queryForObject("select count(*) from foods where id=?", Integer.class, food), is(1));
+        assertThat(compositeCounts().get("workout_sessions"), greaterThan(before.get("workout_sessions")));
+    }
+
+
+    @Test void compositeForgedUserIdCannotChangeAnyAggregateOwner() throws Exception {
+        Session a = registerSession("composite-forged-a-");
+        Session b = registerSession("composite-forged-b-");
+        UUID exercise = UUID.randomUUID();
+        UUID food = UUID.randomUUID();
+        jdbc.update("insert into exercises(id,name) values (?,?)", exercise, "Shared exercise");
+        jdbc.update("insert into foods(id,name,serving_size,calories,protein_g,carbs_g,fat_g,fiber_g) values (?,?,?,?,?,?,?,?)", food, "Shared food", 100, 100, 10, 10, 5, 2);
+        String forged = b.id();
+        Map<String, Object> session = objectMap("user_id", forged, "session", objectMap("title", "Forged session", "workout_type", "Strength", "duration_minutes", 20, "perceived_effort", 6, "completed", true), "exercises", List.of(objectMap("exercise_id", exercise, "order_index", 0, "sets", List.of(objectMap("set_number", 1, "reps", 8, "completed", true)))));
+        MvcResult sessionResult = mvc.perform(post("/api/v1/workout-sessions/complete").header("Authorization", "Bearer " + a.access()).contentType(MediaType.APPLICATION_JSON).content(mapper.writeValueAsString(session))).andExpect(status().isOk()).andReturn();
+        String sessionId = mapper.readTree(sessionResult.getResponse().getContentAsString()).path("id").asText();
+        Map<String, Object> template = objectMap("user_id", forged, "template", objectMap("name", "Forged template", "workout_type", "Strength", "estimated_minutes", 20, "favorite", false), "exercises", List.of(objectMap("exercise_id", exercise, "order_index", 0, "target_sets", 3, "target_reps", "8-12")));
+        MvcResult templateResult = mvc.perform(post("/api/v1/workout-templates/complete").header("Authorization", "Bearer " + a.access()).contentType(MediaType.APPLICATION_JSON).content(mapper.writeValueAsString(template))).andExpect(status().isOk()).andReturn();
+        String templateId = mapper.readTree(templateResult.getResponse().getContentAsString()).path("id").asText();
+        Map<String, Object> meal = objectMap("user_id", forged, "meal", objectMap("meal_date", LocalDate.now(), "meal_type", "SNACK", "name", "Forged meal", "source", "manual"), "items", List.of(objectMap("food_id", food, "grams", 100, "quantity", 1)));
+        MvcResult mealResult = mvc.perform(post("/api/v1/meals/complete").header("Authorization", "Bearer " + a.access()).contentType(MediaType.APPLICATION_JSON).content(mapper.writeValueAsString(meal))).andExpect(status().isOk()).andReturn();
+        String mealId = mapper.readTree(mealResult.getResponse().getContentAsString()).path("id").asText();
+        assertThat(jdbc.queryForObject("select user_id from workout_sessions where id=?", UUID.class, UUID.fromString(sessionId)).toString(), is(a.id()));
+        assertThat(jdbc.queryForObject("select user_id from workout_templates where id=?", UUID.class, UUID.fromString(templateId)).toString(), is(a.id()));
+        assertThat(jdbc.queryForObject("select user_id from meals where id=?", UUID.class, UUID.fromString(mealId)).toString(), is(a.id()));
+        assertThat(jdbc.queryForObject("select count(*) from workout_sessions where user_id=?::uuid and title='Forged session'", Integer.class, b.id()), is(0));
+        assertThat(jdbc.queryForObject("select count(*) from workout_templates where user_id=?::uuid and name='Forged template'", Integer.class, b.id()), is(0));
+        assertThat(jdbc.queryForObject("select count(*) from meals where user_id=?::uuid and name='Forged meal'", Integer.class, b.id()), is(0));
+    }
+
+
+
+    @Test void compositeMealValidationReturnsStructured400AndNoRows() throws Exception {
+        Session owner = registerSession("composite-validation-meal-");
+        UUID food = UUID.randomUUID();
+        jdbc.update("insert into foods(id,name,serving_size,calories,protein_g,carbs_g,fat_g,fiber_g) values (?,?,?,?,?,?,?,?)", food, "Validation food", 100, 100, 10, 10, 5, 2);
+        Map<String, Integer> before = compositeCounts();
+        List<Object> invalidPayloads = List.of(
+                objectMap("meal", objectMap("meal_type", "LUNCH", "name", "Missing date", "source", "manual"), "items", List.of(objectMap("food_id", food, "grams", 100, "quantity", 1))),
+                objectMap("meal", objectMap("meal_date", LocalDate.now(), "meal_type", "INVALID", "name", "Bad type", "source", "manual"), "items", List.of(objectMap("food_id", food, "grams", 100, "quantity", 1))),
+                objectMap("meal", objectMap("meal_date", LocalDate.now(), "meal_type", "LUNCH", "name", "Bad UUID", "source", "manual"), "items", List.of(objectMap("food_id", "not-a-uuid", "grams", 100, "quantity", 1))),
+                objectMap("meal", objectMap("meal_date", LocalDate.now(), "meal_type", "LUNCH", "name", "Empty items", "source", "manual"), "items", List.of()),
+                objectMap("meal", objectMap("meal_date", LocalDate.now(), "meal_type", "LUNCH", "name", "Bad grams", "source", "manual"), "items", List.of(objectMap("food_id", food, "grams", 0, "quantity", 1))),
+                objectMap("meal", objectMap("meal_date", LocalDate.now(), "meal_type", "LUNCH", "name", "Bad quantity", "source", "manual"), "items", List.of(objectMap("food_id", food, "grams", 100, "quantity", 0))));
+        for (Object payload : invalidPayloads) assertStructuredBadRequest(postJson(owner, "/api/v1/meals/complete", payload));
+        assertNoCompositeGrowth(before);
+    }
+
+
+    private MvcResult postJson(Session user, String path, Object payload) throws Exception {
+        return mvc.perform(post(path).header("Authorization", "Bearer " + user.access())
+                .contentType(MediaType.APPLICATION_JSON).content(mapper.writeValueAsString(payload))).andReturn();
+    }
+
+    @Test void compositeSessionValidationReturnsStructured400AndNoRows() throws Exception {
+        Session owner = registerSession("composite-validation-session-");
+        UUID exercise = UUID.randomUUID();
+        jdbc.update("insert into exercises(id,name) values (?,?)", exercise, "Validation exercise");
+        Map<String, Integer> before = compositeCounts();
+        List<Object> invalidPayloads = List.of(
+                objectMap("session", objectMap("title", "Missing type", "duration_minutes", 20, "perceived_effort", 5, "completed", true), "exercises", List.of(objectMap("exercise_id", exercise, "order_index", 0, "sets", List.of(objectMap("set_number", 1, "reps", 8, "completed", true))))),
+                objectMap("session", objectMap("title", "Bad UUID", "workout_type", "Strength", "duration_minutes", 20, "perceived_effort", 5, "completed", true), "exercises", List.of(objectMap("exercise_id", "not-a-uuid", "order_index", 0, "sets", List.of(objectMap("set_number", 1, "reps", 8, "completed", true))))),
+                objectMap("session", objectMap("title", "Empty children", "workout_type", "Strength", "duration_minutes", 20, "perceived_effort", 5, "completed", true), "exercises", List.of()),
+                objectMap("session", objectMap("title", "Bad set", "workout_type", "Strength", "duration_minutes", 20, "perceived_effort", 5, "completed", true), "exercises", List.of(objectMap("exercise_id", exercise, "order_index", 0, "sets", List.of(objectMap("set_number", 0, "reps", 8, "completed", true))))));
+        for (Object payload : invalidPayloads) assertStructuredBadRequest(postJson(owner, "/api/v1/workout-sessions/complete", payload));
+        assertNoCompositeGrowth(before);
+    }
+
+    @Test void compositeTemplateValidationReturnsStructured400AndNoRows() throws Exception {
+        Session owner = registerSession("composite-validation-template-");
+        UUID exercise = UUID.randomUUID();
+        jdbc.update("insert into exercises(id,name) values (?,?)", exercise, "Validation exercise");
+        Map<String, Integer> before = compositeCounts();
+        List<Object> invalidPayloads = List.of(
+                objectMap("template", objectMap("description", "Missing name", "workout_type", "Strength", "estimated_minutes", 20, "favorite", false), "exercises", List.of(objectMap("exercise_id", exercise, "order_index", 0, "target_sets", 3, "target_reps", "8-12"))),
+                objectMap("template", objectMap("name", "Bad UUID", "workout_type", "Strength", "estimated_minutes", 20, "favorite", false), "exercises", List.of(objectMap("exercise_id", "not-a-uuid", "order_index", 0, "target_sets", 3, "target_reps", "8-12"))),
+                objectMap("template", objectMap("name", "Empty children", "workout_type", "Strength", "estimated_minutes", 20, "favorite", false), "exercises", List.of()),
+                objectMap("template", objectMap("name", "Bad child", "workout_type", "Strength", "estimated_minutes", 20, "favorite", false), "exercises", List.of(objectMap("exercise_id", exercise, "order_index", 0, "target_sets", 0, "target_reps", "8-12"))));
+
+        for (Object payload : invalidPayloads) assertStructuredBadRequest(postJson(owner, "/api/v1/workout-templates/complete", payload));
+        assertNoCompositeGrowth(before);
+    }
+
+
+    @Test void compositeForeignChildReferencesAreRejectedWithoutCrossUserMutation() throws Exception {
+        Session a = registerSession("composite-foreign-a-");
+        Session b = registerSession("composite-foreign-b-");
+        UUID exercise = UUID.randomUUID();
+        jdbc.update("insert into exercises(id,name) values (?,?)", exercise, "Catalog exercise");
+        MvcResult sessionResult = postJson(b, "/api/v1/workout-sessions/complete", objectMap("session", objectMap("title", "B source", "workout_type", "Strength", "duration_minutes", 20, "perceived_effort", 6, "completed", true), "exercises", List.of(objectMap("exercise_id", exercise, "order_index", 0, "sets", List.of(objectMap("set_number", 1, "reps", 8, "completed", true))))));
+        UUID sessionId = UUID.fromString(mapper.readTree(sessionResult.getResponse().getContentAsString()).path("id").asText());
+        UUID sessionChild = jdbc.queryForObject("select id from workout_exercises where workout_session_id=?", UUID.class, sessionId);
+        MvcResult templateResult = postJson(b, "/api/v1/workout-templates/complete", objectMap("template", objectMap("name", "B template", "workout_type", "Strength", "estimated_minutes", 20, "favorite", false), "exercises", List.of(objectMap("exercise_id", exercise, "order_index", 0, "target_sets", 3, "target_reps", "8-12"))));
+        UUID templateId = UUID.fromString(mapper.readTree(templateResult.getResponse().getContentAsString()).path("id").asText());
+        UUID templateChild = jdbc.queryForObject("select id from workout_template_exercises where template_id=?", UUID.class, templateId);
+        UUID food = UUID.randomUUID();
+        jdbc.update("insert into foods(id,name,serving_size,calories,protein_g,carbs_g,fat_g,fiber_g) values (?,?,?,?,?,?,?,?)", food, "Catalog food", 100, 100, 10, 10, 5, 2);
+        MvcResult mealResult = postJson(b, "/api/v1/meals/complete", objectMap("meal", objectMap("meal_date", LocalDate.now(), "meal_type", "LUNCH", "name", "B meal", "source", "manual"), "items", List.of(objectMap("food_id", food, "grams", 100, "quantity", 1))));
+        UUID mealId = UUID.fromString(mapper.readTree(mealResult.getResponse().getContentAsString()).path("id").asText());
+        UUID mealChild = jdbc.queryForObject("select id from meal_items where meal_id=?", UUID.class, mealId);
+        Map<String, Integer> before = compositeCounts();
+        assertThat(postJson(a, "/api/v1/workout-sessions/complete", objectMap("session", objectMap("title", "A foreign", "workout_type", "Strength", "duration_minutes", 20, "perceived_effort", 6, "completed", true), "exercises", List.of(objectMap("exercise_id", sessionChild, "order_index", 0, "sets", List.of(objectMap("set_number", 1, "reps", 8, "completed", true)))))).getResponse().getStatus(), is(404));
+        assertThat(postJson(a, "/api/v1/workout-templates/complete", objectMap("template", objectMap("name", "A foreign", "workout_type", "Strength", "estimated_minutes", 20, "favorite", false), "exercises", List.of(objectMap("exercise_id", templateChild, "order_index", 0, "target_sets", 3, "target_reps", "8-12")))).getResponse().getStatus(), is(404));
+        assertThat(postJson(a, "/api/v1/meals/complete", objectMap("meal", objectMap("meal_date", LocalDate.now(), "meal_type", "LUNCH", "name", "A foreign", "source", "manual"), "items", List.of(objectMap("food_id", mealChild, "grams", 100, "quantity", 1)))).getResponse().getStatus(), is(404));
+        assertNoCompositeGrowth(before);
+        assertThat(jdbc.queryForObject("select count(*) from workout_sessions where id=? and user_id=?::uuid", Integer.class, sessionId, b.id()), is(1));
+        assertThat(jdbc.queryForObject("select count(*) from workout_templates where id=? and user_id=?::uuid", Integer.class, templateId, b.id()), is(1));
+        assertThat(jdbc.queryForObject("select count(*) from meals where id=? and user_id=?::uuid", Integer.class, mealId, b.id()), is(1));
     }
 
 }

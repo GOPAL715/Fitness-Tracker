@@ -4,6 +4,7 @@ import {
   Camera, Search, X, Check, AlertTriangle,
 } from "lucide-react";
 import { apiData, MEAL_TYPES, type Meal, type Profile, type DailyMetric } from "../lib/api/dataAdapter";
+import { completeMeal } from "../lib/api/nutritionApi";
 import type { Food, MealItem } from "../lib/types";
 import { macroTotals } from "../lib/insights";
 import { calculateNutrition, sumNutrition } from "../lib/nutrition";
@@ -109,46 +110,9 @@ export default function NutritionView({ meals, mealItems, foods, profile, todayM
     setSaving(true);
     setError(null);
 
-    const { data: meal, error: insertError } = await apiData
-      .from("meals")
-      .insert({
-        meal_date: today,
-        meal_type: mealForm.meal_type,
-        name,
-        calories: Math.round(values.calories),
-        protein_g: Math.round(values.protein_g),
-        carbs_g: Math.round(values.carbs_g),
-        fat_g: Math.round(values.fat_g),
-        fiber_g: Math.round(values.fiber_g),
-        source: "manual",
-      })
-      .select("id")
-      .maybeSingle();
-
-    if (insertError || !meal) {
-      setSaving(false);
-      setError("That meal could not be saved. Please try again.");
-      return;
-    }
-
-    const rows = drafts.map((d) => {
-      const v = calculateNutrition(d.food, d.grams);
-      return {
-        meal_id: meal.id,
-        food_id: d.food.id,
-        food_name: d.food.name,
-        quantity: 1,
-        grams: d.grams,
-        calories: v.calories,
-        protein_g: v.protein_g,
-        carbs_g: v.carbs_g,
-        fat_g: v.fat_g,
-        fiber_g: v.fiber_g,
-        source: "manual",
-      };
-    });
-    await apiData.from("meal_items").insert(rows);
-
+    try {
+      await completeMeal({ meal: { meal_date: today, meal_type: mealForm.meal_type.toUpperCase(), name, source: 'manual' }, items: drafts.map((d) => ({ food_id: d.food.id, grams: d.grams, quantity: 1 })) });
+    } catch { setSaving(false); setError('That meal could not be saved. Please try again.'); return; }
     setSaving(false);
     setManualOpen(false);
     onRefresh();
