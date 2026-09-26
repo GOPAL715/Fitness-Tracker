@@ -1,5 +1,7 @@
 package com.fittrack.api;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -18,6 +20,8 @@ import java.util.Map;
  */
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+
+    private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
     /** Correlation id for the in-flight request, or null outside a request scope. */
     private static String correlation() {
@@ -126,14 +130,40 @@ public class GlobalExceptionHandler {
     }
 
     /**
-     * Unexpected failures are recorded server-side but returned as an opaque 500.
+    /**
+     * Unexpected failures are logged server-side and returned as an opaque 500.
      *
-     * <p>The exception type goes to the MDC for structured logs and never reaches the client.
+     * <p>The log carries the exception type and a redacted message, never the throwable itself.
+     * A constraint violation reports the offending column and value, for example
+     * {@code Key (token_hash)=(...)}, so logging it verbatim would write a token hash to disk.
+     * Set logging level DEBUG for this logger to get the full stack trace when diagnosing a
+     * specific incident.
      */
     @ExceptionHandler(Exception.class)
     ResponseEntity<?> other(Exception e) {
-        if (correlation() != null) MDC.put("error_type", e.getClass().getName());
+        String type = e.getClass().getName();
+        if (correlation() != null) MDC.put("error_type", type);
+        log.error("unhandled_exception type={} message={}", type, redact(String.valueOf(e.getMessage())));
+        if (log.isDebugEnabled()) log.debug("unhandled_exception_detail", e);
         return ResponseEntity.internalServerError()
                 .body(body(500, "Internal Server Error", "internal_error", "Unexpected error"));
     }
+
+    /**
+     * Removes credential-shaped values from a message before it is logged.
+     *
+     * <p>Redacts long hex runs (refresh-token hashes) and JWT-shaped segments. This is a
+     * defence in depth: the handler should not be the thing that decides a message is safe.
+     */
+    static String redact(String message) {
+        if (message == null) return "";
+        return message
+                // "Bearer <jwt>" is covered separately: a generic value pattern stops at the
+                // space and would leave the token itself behind.
+                .replaceAll("(?i)Bearer\\s+\\S+", "Bearer [redacted]")
+                .replaceAll("(?i)(token_hash|password|token|secret|authorization)(\\s*[:=]\\s*\\(?)[^)\\s,;]+", "$1$2[redacted]")
+                .replaceAll("\\b[0-9a-f]{32,}\\b", "[redacted-hash]")
+                .replaceAll("\\beyJ[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]+", "[redacted-jwt]");
+    }
+
 }

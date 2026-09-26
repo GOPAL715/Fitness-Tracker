@@ -4,7 +4,15 @@ import org.springframework.stereotype.Service; import org.springframework.transa
  UserRepository users; RefreshTokenRepository tokens; PasswordEncoder encoder; JwtService jwt; Duration ttl;
  public AuthService(UserRepository u,RefreshTokenRepository t,PasswordEncoder p,JwtService j,@Value("${app.refresh-ttl}") Duration d){users=u;tokens=t;encoder=p;jwt=j;ttl=d;}
  @Transactional public Tokens register(Credentials c){validate(c);String email=c.email().toLowerCase();if(users.existsByEmail(email))throw new IllegalArgumentException("Email already registered");User u=new User();u.setEmail(email);u.setPasswordHash(encoder.encode(c.password()));users.save(u);return issue(u);}
- public Tokens login(Credentials c){validate(c);User u=users.findByEmail(c.email().toLowerCase()).orElseThrow(()->new IllegalArgumentException("Invalid credentials"));if(!encoder.matches(c.password(),u.getPasswordHash()))throw new IllegalArgumentException("Invalid credentials");return issue(u);}
+ /**
+  * Authenticates and issues a new session.
+  *
+  * <p>Transactional on purpose: {@code issue} reads the lazy {@code User.roles} collection to build
+  * the access token and inserts the refresh token. Without an open session the roles collection
+  * cannot be read, which surfaced as a 500 on every successful login. Keeping both steps in
+  * one transaction also makes the refresh-token insert atomic with the login.
+  */
+ @Transactional public Tokens login(Credentials c){validate(c);User u=users.findByEmail(c.email().toLowerCase()).orElseThrow(()->new IllegalArgumentException("Invalid credentials"));if(!encoder.matches(c.password(),u.getPasswordHash()))throw new IllegalArgumentException("Invalid credentials");return issue(u);}
  @Transactional(noRollbackFor=IllegalArgumentException.class) public Tokens rotate(String raw){RefreshToken old=find(raw).orElseThrow(()->new IllegalArgumentException("Invalid refresh token"));if(old.isUsed()||old.isRevoked()){revokeFamily(old.getFamilyId());throw new IllegalArgumentException("Refresh token reuse detected");}if(!old.getExpiresAt().isAfter(Instant.now())){old.setRevoked(true);tokens.save(old);throw new IllegalArgumentException("Invalid refresh token");}User u=users.findById(old.getUserId()).orElseThrow();String rawNew=secret();RefreshToken replacement=new RefreshToken();replacement.setUserId(old.getUserId());replacement.setFamilyId(old.getFamilyId());replacement.setTokenHash(hash(rawNew));replacement.setExpiresAt(Instant.now().plus(ttl));old.setUsed(true);old.setRevoked(true);old.setReplacedByHash(replacement.getTokenHash());tokens.save(old);tokens.save(replacement);return new Tokens(jwt.access(u),rawNew,replacement.getExpiresAt(),safeUser(u));}
  @Transactional public void logout(String raw){if(raw==null||raw.isBlank())return;find(raw).ifPresent(t->{t.setRevoked(true);tokens.save(t);});}
  public java.util.Map<String,Object> me(String id){User u=users.findById(java.util.UUID.fromString(id)).orElseThrow();return java.util.Map.of("id",u.getId(),"email",u.getEmail(),"enabled",u.isEnabled());}
