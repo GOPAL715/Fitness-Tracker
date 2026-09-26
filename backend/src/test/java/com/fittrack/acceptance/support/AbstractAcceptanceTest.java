@@ -36,6 +36,13 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
  * every later context. The {@link FakeAiProvider} is installed as the primary
  * {@link AiProvider} bean so no test can reach a real external AI API.
  */
+@org.springframework.test.context.TestPropertySource(properties = {
+        // The suite registers many users, so the default is effectively unlimited. A test that
+        // verifies limiting itself redeclares @TestPropertySource, which replaces this one.
+        "app.rate-limit.auth-requests=100000",
+        "app.rate-limit.api-requests=100000",
+        "app.rate-limit.ai-requests=100000"
+})
 public abstract class AbstractAcceptanceTest {
 
     private static final PostgreSQLContainer<?> POSTGRES = SharedPostgres.INSTANCE;
@@ -71,6 +78,10 @@ public abstract class AbstractAcceptanceTest {
         AiProvider fakeAiProvider() { return new FakeAiProvider(); }
     }
 
+    /** The shared container, so a test can create a second database on the same server. */
+    protected static PostgreSQLContainer<?> container() { return POSTGRES; }
+    protected String currentDatabase() { return jdbc.queryForObject("select current_database()", String.class); }
+
     @Autowired protected MockMvc mvc;
     @Autowired protected ObjectMapper mapper;
     @Autowired protected JdbcTemplate jdbc;
@@ -84,9 +95,15 @@ public abstract class AbstractAcceptanceTest {
     }
 
     @BeforeEach
-    void resetFakeProvider() { fake().reset(); }
-
-    public record Session(String id, String access) {}
+    void resetFakeProvider() {
+        // A few suites (config guards, backup checks) deliberately build no AI context; only
+        // reset when one is actually present.
+        if (aiProvider instanceof FakeAiProvider fake) fake.reset();
+    }
+    public record Session(String id, String access, String refresh) {
+        public Session(String id, String access) { this(id, access, null); }
+        public String refresh() { return refresh; }
+    }
 
     protected Session register(String prefix) throws Exception {
         String email = prefix + UUID.randomUUID() + "@example.test";
@@ -97,7 +114,8 @@ public abstract class AbstractAcceptanceTest {
         assertThat(result.getResponse().getStatus())
                 .as("registration must succeed for %s", email).isEqualTo(200);
         JsonNode body = mapper.readTree(result.getResponse().getContentAsString());
-        return new Session(body.path("user").path("id").asText(), body.path("access_token").asText());
+        return new Session(body.path("user").path("id").asText(), body.path("access_token").asText(),
+                body.path("refresh_token").asText(null));
     }
 
     protected MvcResult call(Session session, MockHttpServletRequestBuilder request) throws Exception {

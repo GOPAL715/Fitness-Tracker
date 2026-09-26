@@ -42,6 +42,13 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @SpringBootTest(classes = com.fittrack.api.FitTrackApplication.class)
 @AutoConfigureMockMvc
 @Testcontainers
+@org.springframework.test.context.TestPropertySource(properties = {
+        // Phase 16 rate limiting must not interfere with behavioural acceptance tests; the
+        // rate limiter has its own dedicated test classes that exercise real 429 responses.
+        "app.rate-limit.auth-requests=100000",
+        "app.rate-limit.api-requests=100000",
+        "app.rate-limit.ai-requests=100000"
+})
 class AcceptanceHttpTest {
     @Container
     static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16-alpine");

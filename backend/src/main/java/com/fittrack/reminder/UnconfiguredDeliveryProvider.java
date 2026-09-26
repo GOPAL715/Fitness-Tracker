@@ -2,8 +2,8 @@ package com.fittrack.reminder;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
-import org.springframework.stereotype.Component;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
 
 /**
  * Default delivery provider.
@@ -14,19 +14,33 @@ import org.springframework.stereotype.Component;
  * forever against a channel that was never configured. Deployments that configure push register
  * their own {@link NotificationDeliveryProvider} bean, which this one yields to.
  */
-@Component
-@ConditionalOnMissingBean(NotificationDeliveryProvider.class)
-public class UnconfiguredDeliveryProvider implements NotificationDeliveryProvider {
+@Configuration
+public class UnconfiguredDeliveryProvider {
 
     private static final Logger log = LoggerFactory.getLogger(UnconfiguredDeliveryProvider.class);
 
-    @Override
-    public Outcome deliver(DeliveryRequest request) {
-        log.info("reminder_delivery_unconfigured reminder_id={} occurrence={} reason=no_push_provider_registered",
-                request.reminderId(), request.occurrence());
-        return Outcome.PERMANENT_FAILURE;
-    }
+    /**
+     * Registered only when no delivery provider is supplied.
+     *
+     * <p>Declared in a {@code @Configuration} class on purpose: {@code @ConditionalOnMissingBean}
+     * is evaluated reliably for beans defined in configuration, but on an ordinary
+     * {@code @Component} the ordering is undefined and the default can win over a real provider,
+     * or be skipped entirely and leave the application with no bean to inject.
+     */
+    @Bean("unconfiguredNotificationDeliveryProvider")
+    @org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean(NotificationDeliveryProvider.class)
+    NotificationDeliveryProvider unconfiguredDeliveryProvider() {
+        return new NotificationDeliveryProvider() {
+            @Override
+            public Outcome deliver(DeliveryRequest request) {
+                log.info("reminder_delivery_unconfigured reminder_id={} occurrence={} "
+                                + "reason=no_push_provider_registered",
+                        request.reminderId(), request.occurrence());
+                return Outcome.PERMANENT_FAILURE;
+            }
 
-    @Override
-    public String channel() { return "none"; }
+            @Override
+            public String channel() { return "none"; }
+        };
+    }
 }

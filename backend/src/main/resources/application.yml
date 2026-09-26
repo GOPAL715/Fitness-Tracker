@@ -1,4 +1,4 @@
-﻿server:
+server:
   port: 8080
   error:
     include-message: never
@@ -44,9 +44,64 @@ app:
     pricing:
       input-per-million: ${AI_INPUT_PRICE_PER_MILLION:0}
       output-per-million: ${AI_OUTPUT_PRICE_PER_MILLION:0}
+  # Phase 16 production hardening.
+  # production=true enables secret validation, HSTS, and prod-only CORS rules. It must be set in
+  # every real deployment; it is false locally and in tests.
+  production: ${APP_PRODUCTION:false}
+  cors:
+    # Explicit origins only. A wildcard is never valid here because credentials are enabled.
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173,http://localhost:3000}
+  rate-limit:
+    # Transport-level abuse protection, separate from the AI quotas above.
+    auth-requests: ${RATE_LIMIT_AUTH_REQUESTS:10}
+    auth-window-seconds: ${RATE_LIMIT_AUTH_WINDOW:60}
+    api-requests: ${RATE_LIMIT_API_REQUESTS:300}
+    api-window-seconds: ${RATE_LIMIT_API_WINDOW:60}
+    ai-requests: ${RATE_LIMIT_AI_REQUESTS:20}
+    ai-window-seconds: ${RATE_LIMIT_AI_WINDOW:60}
+    # When true the limiter uses Redis for shared state across instances. With Redis configured but
+    # unreachable, authentication limits fail closed and general API limits fail open.
+    redis-enabled: ${RATE_LIMIT_REDIS_ENABLED:false}
 management:
   endpoints:
     web:
       exposure:
+        # Only health. Never env, configprops, beans, loggers, mappings or heapdump.
         include: health
+  endpoint:
+    health:
+      show-details: never
+      show-components: never
+      group:
+        # Explicit groups so /actuator/health/liveness and /readiness are always available, not only
+        # where availability probes are auto-detected. Liveness never checks dependencies, so a
+        # database blip does not cause a restart loop; readiness does, so traffic drains first.
+        liveness:
+          include: livenessState
+        readiness:
+          include: readinessState,db,redis
+  health:
+    redis:
+      # Spring's auto-configured indicator would report DOWN when Redis is absent. Redis is
+      # optional here (the limiter falls back to in-process state), so it is disabled and the
+      # Phase 16 RedisHealthIndicator reports UNKNOWN until RATE_LIMIT_REDIS_ENABLED=true.
+      enabled: false
+    livenessstate:
+      enabled: true
+    readinessstate:
+      enabled: true
+    probes:
+      # Explicit group definitions so /actuator/health/liveness and /readiness exist in every
+      # environment, not only where availability probes are auto-detected.
+      enabled: true
+  info:
+    env:
+      enabled: false
+  metrics:
+    tags:
+      application: fittrack-backend
+logging:
+  pattern:
+    # Correlation id first so log lines can be joined to a request and to an error response.
+    console: "%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX} level=%-5level correlation=%X{request_id:-none} logger=%logger{36} error_type=%X{error_type:-none} msg=%msg%n"
 

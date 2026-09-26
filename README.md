@@ -277,10 +277,14 @@ back to `index.html` (`dist/_redirects` is included for that).
 - No secret is exposed through the frontend; backend secrets remain server-side.
 - Scan objects are stored privately and scoped to the authenticated owner.
 - Catalog writes are not exposed.
-- CORS is restricted to the configured local frontend origins in `SecurityConfig`; production origins must
-  be explicitly reviewed and configured.
-- Current limitations include localStorage token storage, no password recovery, no explicit rate limiting
-  or lockout, and no production abuse controls.
+- CORS origins are configured explicitly and are never a wildcard, because credentials are enabled.
+- Rate limiting protects authentication, AI, scanner and general API traffic independently.
+
+See [docs/PRODUCTION.md](docs/PRODUCTION.md) for the full production posture: rate limits, HTTP
+headers, secrets, observability, backup and restore, deployment, account lifecycle,
+troubleshooting, incident response and rollback.
+
+---
 
 ## 17. Known limitations
 

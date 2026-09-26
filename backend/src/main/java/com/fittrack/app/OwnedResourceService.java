@@ -25,6 +25,9 @@ public class OwnedResourceService {
     private static Spec child(String table, Scope scope, String cols) { return new Spec(table, scope, columns(cols), false); }
     private static Spec profile() { return new Spec("fitness_profile", Scope.USER, columns("display_name,goal,fitness_level,equipment,limitations,activity_target,weekly_minutes,sleep_target,step_target,calorie_target,protein_target_g,water_target_oz,target_weight_lb"), true); }
 
+    /** Upper bound on any list result, so no endpoint can return an unbounded set. */
+    static final int MAX_PAGE = 500;
+
     private static final Map<String, Spec> SPECS = Map.ofEntries(
         Map.entry("profile", profile()), Map.entry("fitness-profile", profile()),
         Map.entry("daily-metrics", owned("daily_metrics", "metric_date,steps,sleep_hours,calories_burned,water_oz,resting_heart_rate,readiness,hrv,active_minutes,stress_level")),
@@ -66,7 +69,7 @@ public class OwnedResourceService {
             params.addValue("uid", uuid(user, "user id"));
             predicate = childJoin(spec.scope()) + "t.id=t.id";
         }
-        return jdbc.queryForList("SELECT t.* FROM " + spec.table() + " t" + predicate + " ORDER BY t.id DESC", params);
+        return jdbc.queryForList("SELECT t.* FROM " + spec.table() + " t" + predicate + " ORDER BY t.id DESC LIMIT " + MAX_PAGE, params);
     }
 
     public Map<String, Object> get(String resource, String id, String user) { return one(resource, id, user); }
@@ -85,7 +88,7 @@ public class OwnedResourceService {
             params.addValue("uid", uuid(user, "user id"));
             predicate = childJoin(spec.scope()) + "t.id=:id";
         }
-        return jdbc.queryForList("SELECT t.* FROM " + spec.table() + " t" + predicate, params)
+        return jdbc.queryForList("SELECT t.* FROM " + spec.table() + " t" + predicate + " LIMIT " + MAX_PAGE, params)
             .stream().findFirst().orElseThrow(() -> new NoSuchElementException("Resource not found"));
     }
 

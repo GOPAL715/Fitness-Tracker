@@ -58,7 +58,9 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080; printf \"GET /actuator/health HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n\" >&3; grep -q \"200\" <&3'"]
+      # Liveness only: a database blip must not mark the container unhealthy or cause a
+      # restart loop. Readiness is what a load balancer should poll.
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:8080/actuator/health/liveness"]
       interval: 10s
       timeout: 5s
       retries: 12

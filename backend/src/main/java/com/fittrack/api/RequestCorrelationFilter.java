@@ -1,7 +1,9 @@
 package com.fittrack.api;
 
 import org.springframework.web.filter.OncePerRequestFilter;
-import org.springframework.stereotype.Component;
+// Registered explicitly as a FilterRegistrationBean in SecurityConfig, so that the correlation
+// id is in the MDC before the security chain runs. As a plain @Component this filter would
+// default to lowest precedence and be evaluated too late to appear in authentication errors.
 import org.slf4j.MDC;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -10,7 +12,6 @@ import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.util.UUID;
 
-@Component
 public class RequestCorrelationFilter extends OncePerRequestFilter {
     @Override protected void doFilterInternal(HttpServletRequest request,HttpServletResponse response,FilterChain chain) throws ServletException,IOException {
         String supplied=request.getHeader("X-Request-Id"); String id;
