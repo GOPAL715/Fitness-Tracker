@@ -7,12 +7,15 @@
  * - API requests (including `/api/` and cross-origin API hosts): never cached.
  *   Private health data must always come directly from the server.
  * - Navigation requests fall back to the cached shell when offline.
+ * - Offline writes are queued by the application in IndexedDB and replayed through
+ *   the normal REST API; the worker never replays or caches them itself.
  *
- * Workout logging offline (an IndexedDB queue) is not implemented yet; see the
- * README known limitations. This worker only guarantees the app opens offline.
+ * Only the static shell is ever stored, so no Authorization-dependent response can
+ * be shared between users. `PURGE_USER_DATA` exists so sign-out can defensively drop
+ * any cache a future change might introduce.
  */
 
-const VERSION = "fittrack-v1";
+const VERSION = "fittrack-v2";
 const SHELL_CACHE = `${VERSION}-shell`;
 
 const SHELL_ASSETS = ["/", "/index.html", "/manifest.webmanifest"];
@@ -36,6 +39,13 @@ self.addEventListener("activate", (event) => {
   );
 });
 
+// Sign-out / user switch: drop everything this worker owns.
+self.addEventListener("message", (event) => {
+  if (event.data && event.data.type === "PURGE_USER_DATA") {
+    event.waitUntil(caches.keys().then((keys) => Promise.all(keys.map((k) => caches.delete(k)))));
+  }
+});
+
 function isPrivateRequest(url) {
   return (
     url.pathname.startsWith("/api/") ||
@@ -47,6 +57,7 @@ function isPrivateRequest(url) {
 
 self.addEventListener("fetch", (event) => {
   const { request } = event;
+  // Never intercept a write: queued offline mutations replay through the API directly.
   if (request.method !== "GET") return;
 
   const url = new URL(request.url);
@@ -70,7 +81,8 @@ self.addEventListener("fetch", (event) => {
     caches.match(request).then((cached) => {
       const network = fetch(request)
         .then((response) => {
-          if (response && response.status === 200 && response.type === "basic") {
+          // Only ever store same-origin shell assets; never a cross-origin or opaque body.
+          if (response && response.status === 200 && response.type === "basic" && sameOrigin) {
             const copy = response.clone();
             caches.open(SHELL_CACHE).then((cache) => cache.put(request, copy)).catch(() => {});
           }

@@ -40,7 +40,10 @@ public class OwnedResourceService {
         Map.entry("ai-usage", owned("ai_usage", "feature,model,input_tokens,output_tokens,success,estimated_cost")),
         Map.entry("habits", owned("habits", "name,description,icon,target_per_week,color,active")),
         Map.entry("habit-logs", child("habit_logs", Scope.HABIT_LOG, "habit_id,log_date,completed")),
-        Map.entry("reminders", owned("reminders", "type,title,message,scheduled_time,days_of_week,enabled,quiet_hours_start,quiet_hours_end")),
+        // Phase 15: timezone and recurrence are user-settable scheduling inputs. Delivery state
+        // (delivery_status, delivery_attempts, last_error, last_delivered_at, next_occurrence_at)
+        // is deliberately absent so it stays server-controlled.
+        Map.entry("reminders", owned("reminders", "type,title,message,scheduled_time,days_of_week,enabled,quiet_hours_start,quiet_hours_end,timezone,recurrence")),
         Map.entry("health-devices", owned("health_devices", "device_name,device_type,status,last_sync")),
         Map.entry("coach-notifications", owned("coach_notifications", "title,message,kind,is_read")),
         Map.entry("exercises", catalog("exercises", "name,description,muscle_group,secondary_muscles,equipment,difficulty,instructions,is_compound")),
@@ -174,6 +177,15 @@ public class OwnedResourceService {
                 if (value instanceof String text) value = new java.math.BigDecimal(text);
             } else if (name.endsWith("_completed") || name.endsWith("_active") || name.endsWith("_enabled") || name.endsWith("_read") || name.endsWith("_favorite")) {
                 if (value instanceof String text) value = Boolean.valueOf(text);
+            } else if (name.endsWith("_time")) {
+                // Time columns (for example reminder scheduled_time) reject a varchar argument.
+                if (value instanceof String text) value = java.sql.Time.valueOf(text.length() == 5 ? text + ":00" : text);
+            }
+            // The client sends list-shaped values (for example reminder days_of_week) as JSON
+            // arrays, while the matching columns are text. Join them into the stored CSV form.
+            if (value instanceof java.util.Collection<?> items) {
+                value = items.stream().map(String::valueOf)
+                        .collect(java.util.stream.Collectors.joining(","));
             }
             result.put(name, name.endsWith("_id") && value instanceof String text ? uuid(text, name) : value);
         }

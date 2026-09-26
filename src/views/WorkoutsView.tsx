@@ -396,6 +396,7 @@ export default function WorkoutsView({ workouts, plan, sessions, templates, exer
           initialType={loggerPreset?.type ?? "Strength"}
           onClose={() => setLoggerOpen(false)}
           onSaved={onRefresh}
+          onQueued={onRefresh}
         />
       )}
 

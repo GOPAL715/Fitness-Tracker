@@ -1,5 +1,6 @@
-import { Activity, AlertTriangle, Check, LogOut, Menu, RefreshCw, X } from "lucide-react";
+import { Activity, AlertTriangle, Check, CloudOff, LogOut, Menu, RefreshCw, X } from "lucide-react";
 import { TABS, type Tab } from "../features/navigation/tabs";
+import { label as syncLabel, type SyncStatus } from "../lib/offline/syncStatus";
 
 /** Full-screen loading state used while starting up or fetching. */
 export function LoadingScreen({ message }: { message: string }) {
@@ -39,8 +40,30 @@ type AppShellProps = {
   onToggleMenu: () => void;
   email: string | undefined;
   onSignOut: () => void;
+  /** Offline / sync indicator state, rendered in the header. */
+  syncStatus?: SyncStatus;
   children: React.ReactNode;
 };
+
+/** Compact connectivity and pending-sync indicator shown in the header. */
+function SyncIndicator({ status }: { status: SyncStatus }) {
+  const offline = status.state === 'offline';
+  return (
+    <span
+      className="sync-indicator"
+      data-testid="sync-indicator"
+      data-state={status.state}
+      role="status"
+      aria-live="polite"
+      title={'Sync status: ' + status.state}
+      style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12,
+        color: offline ? '#fca5a5' : status.state === 'online' ? '#94a3b8' : '#fbbf24' }}
+    >
+      {offline && <CloudOff size={13} aria-hidden="true" />}
+      <span>{syncLabel(status)}</span>
+    </span>
+  );
+}
 
 /** Header, navigation, footer and content frame. */
 export function AppShell({
@@ -50,6 +73,7 @@ export function AppShell({
   onToggleMenu,
   email,
   onSignOut,
+  syncStatus,
   children,
 }: AppShellProps) {
   return (
@@ -79,6 +103,7 @@ export function AppShell({
         </nav>
 
         <div className="header-actions">
+          {syncStatus && <SyncIndicator status={syncStatus} />}
           <button
             className="menu-btn"
             onClick={onToggleMenu}

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useAuth } from "./lib/auth";
+import { useSyncStatus } from "./lib/offline/useSyncStatus";
 import { useAppData } from "./features/appData/useAppData";
 import { DEFAULT_TAB, type Tab } from "./features/navigation/tabs";
 import { AppShell, ErrorScreen, LoadingScreen } from "./components/AppShell";
@@ -25,6 +26,7 @@ import ProfileView from "./views/ProfileView";
 export default function App() {
   const { user, loading: authLoading, signOut } = useAuth();
   const app = useAppData();
+  const sync = useSyncStatus();
 
   const [tab, setTab] = useState<Tab>(DEFAULT_TAB);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -50,6 +52,7 @@ export default function App() {
       onToggleMenu={() => setMenuOpen((v) => !v)}
       email={user.email}
       onSignOut={signOut}
+      syncStatus={sync.status}
     >
       {tab === "today" && (
         <TodayView

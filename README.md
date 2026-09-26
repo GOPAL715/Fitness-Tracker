@@ -289,12 +289,20 @@ no web access. Fitbit and Garmin need an OAuth application with server-side cred
 described honestly in the Profile screen along with exactly what each would require. The normalisation
 layer in `healthProviders.ts` is real and tested in shape, but no provider is connected.
 
-**The PWA shell works offline; workout logging offline does not.** The service worker caches the app
-shell so FitTrack opens without a connection, and deliberately never caches private health data. The
-IndexedDB write queue and sync-with-retry described in the original plan is not implemented.
+**The PWA shell works offline, and workout logging now queues offline.** The service worker caches
+the app shell so FitTrack opens without a connection, and deliberately never caches private health
+data or intercepts writes. Logging a workout while offline stores the exact request in an
+IndexedDB queue and replays it through the normal REST API on reconnect, carrying a stable
+`Idempotency-Key` so a retried submission cannot create a duplicate session. The header shows a
+live Online / Offline / Syncing / pending / failed / conflict indicator.
 
-**Reminders are stored, not delivered.** Full schedule, recurring days and quiet hours are persisted and
-editable, but nothing fires a browser notification yet. The service worker is the natural place to add it.
+**Reminders are scheduled and accounted, but push delivery is an external deployment capability.**
+Full schedule, recurring days, quiet hours and per-user timezones are persisted, and delivery runs
+through a `NotificationDeliveryProvider` with timezone-aware occurrences, per-occurrence database
+idempotency and bounded retries. No push provider is connected: without configured VAPID
+credentials the default provider reports a permanent failure rather than pretending to deliver.
+Browser push needs deployment-supplied VAPID keys and a browser subscription store, which are out
+of scope here.
 
 **AI features need a server key.** Without `OPENAI_API_KEY` the scanner and weekly coach return a clear
 not-configured message. Everything else works.

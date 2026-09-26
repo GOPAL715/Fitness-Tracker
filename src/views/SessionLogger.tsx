@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { Plus, Trash2, Search, Dumbbell, Save, X } from "lucide-react";
 import { WORKOUT_TYPES } from "../lib/api/dataAdapter";
-import { completeWorkoutSession } from "../lib/api/workoutApi";
+import { submitWorkoutSession } from "../lib/offline/workoutSync";
 import type { Exercise } from "../lib/types";
 import { Modal } from "../components/ui";
 import { estimateOneRepMax } from "../lib/workoutMetrics";
@@ -14,6 +14,8 @@ type Props = {
   exercises: Exercise[];
   onClose: () => void;
   onSaved: () => void;
+  /** Called when the session could not be sent and was queued for later sync. */
+  onQueued?: () => void;
   initialTitle?: string;
   initialType?: string;
 };
@@ -22,7 +24,7 @@ let keyCounter = 0;
 const nextKey = () => `k${++keyCounter}`;
 const blankSet = (): SetDraft => ({ key: nextKey(), reps: "8", weight: "", rpe: "" });
 
-export default function SessionLogger({ exercises, onClose, onSaved, initialTitle = "", initialType = "Strength" }: Props) {
+export default function SessionLogger({ exercises, onClose, onSaved, onQueued, initialTitle = "", initialType = "Strength" }: Props) {
   const [title, setTitle] = useState(initialTitle);
   const [workoutType, setWorkoutType] = useState<string>(initialType);
   const [effort, setEffort] = useState("7");
@@ -111,10 +113,11 @@ export default function SessionLogger({ exercises, onClose, onSaved, initialTitl
     setError(null);
 
     try {
-      await completeWorkoutSession({
+      const result = await submitWorkoutSession({
         session: { title: title.trim(), workout_type: workoutType, duration_minutes: Math.max(10, totals.sets * 3), perceived_effort: Number(effort) || 6, notes: notes.trim() || null, completed: true },
         exercises: usable.map((d, i) => ({ exercise_id: d.exercise.id, order_index: i, notes: null, sets: d.sets.filter((s) => Number(s.reps) > 0 || Number(s.weight) > 0).map((s, idx) => ({ set_number: idx + 1, reps: Number(s.reps) > 0 ? Number(s.reps) : null, weight: Number(s.weight) > 0 ? Number(s.weight) : null, rpe: Number(s.rpe) > 0 ? Number(s.rpe) : null, completed: true })) }))
       });
+      if (result.mode === "offline") onQueued?.();
     } catch {
       setSaving(false);
       setError("That session could not be saved. Please try again.");
