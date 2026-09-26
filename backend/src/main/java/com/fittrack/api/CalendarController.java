@@ -34,15 +34,15 @@ public class CalendarController {
         List<Map<String,Object>> metricRows = jdbc.queryForList(
             "SELECT COALESCE(steps,0) AS steps, COALESCE(water_oz,0) AS water_oz, " +
             "COALESCE(calories_burned,0) AS calories_burned, COALESCE(active_minutes,0) AS active_minutes, " +
-            "COALESCE(sleep_hours,0) AS sleep_hours FROM daily_metrics WHERE user_id=? AND metric_date=?",
+            "COALESCE(sleep_hours,0) AS sleep_hours FROM daily_metrics WHERE user_id=CAST(? AS uuid) AND metric_date=?",
             userId, date);
         Map<String,Object> metrics = metricRows.isEmpty()
             ? Map.of("steps", 0, "water_oz", 0, "calories_burned", 0, "active_minutes", 0, "sleep_hours", 0)
             : metricRows.get(0);
-        Integer workouts = jdbc.queryForObject("SELECT COUNT(*) FROM workouts WHERE user_id=? AND workout_date=?", Integer.class, userId, date);
-        Integer sessions = jdbc.queryForObject("SELECT COUNT(*) FROM workout_sessions WHERE user_id=? AND started_at::date=?", Integer.class, userId, date);
-        Integer meals = jdbc.queryForObject("SELECT COUNT(*) FROM meals WHERE user_id=? AND meal_date=?", Integer.class, userId, date);
-        Integer habits = jdbc.queryForObject("SELECT COUNT(*) FROM habit_logs WHERE user_id=? AND log_date=? AND completed=true", Integer.class, userId, date);
+        Integer workouts = jdbc.queryForObject("SELECT COUNT(*) FROM workouts WHERE user_id=CAST(? AS uuid) AND workout_date=?", Integer.class, userId, date);
+        Integer sessions = jdbc.queryForObject("SELECT COUNT(*) FROM workout_sessions WHERE user_id=CAST(? AS uuid) AND started_at::date=?", Integer.class, userId, date);
+        Integer meals = jdbc.queryForObject("SELECT COUNT(*) FROM meals WHERE user_id=CAST(? AS uuid) AND meal_date=?", Integer.class, userId, date);
+        Integer habits = jdbc.queryForObject("SELECT COUNT(*) FROM habit_logs WHERE user_id=CAST(? AS uuid) AND log_date=? AND completed=true", Integer.class, userId, date);
         Map<String,Object> summary = new LinkedHashMap<>(metrics);
         summary.put("workouts", workouts + sessions);
         summary.put("meals", meals);

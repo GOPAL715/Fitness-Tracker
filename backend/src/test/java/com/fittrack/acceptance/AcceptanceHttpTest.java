@@ -661,4 +661,29 @@ class AcceptanceHttpTest {
         assertThat(jdbc.queryForObject("select count(*) from meals where id=? and user_id=?::uuid", Integer.class, mealId, b.id()), is(1));
     }
 
+
+    @Test void analyticsTypedContractsBoundariesAndOwnershipAreStable() throws Exception {
+        Session a=registerSession("analytics-boundary-a-"); Session b=registerSession("analytics-boundary-b-"); LocalDate d=LocalDate.of(2026,1,15);
+        jdbc.update("insert into daily_metrics(id,user_id,metric_date,steps,sleep_hours,calories_burned) values (?,?::uuid,?,?,?,?)",UUID.randomUUID(),a.id(),d,100,7.5,200);
+        jdbc.update("insert into daily_metrics(id,user_id,metric_date,steps,sleep_hours,calories_burned) values (?,?::uuid,?,?,?,?)",UUID.randomUUID(),b.id(),d,900,9.9,900);
+        jdbc.update("insert into meals(id,user_id,meal_date,meal_type,name,source,calories,protein_g,carbs_g,fat_g) values (?,?::uuid,?,?,?,?,?,?,?,?)",UUID.randomUUID(),a.id(),d,"LUNCH","A meal","manual",400,30,40,10);
+        mvc.perform(get("/api/v1/analytics/dashboard").header("Authorization","Bearer "+a.access())).andExpect(status().isOk()).andExpect(jsonPath("$.activity.steps").value(0)).andExpect(jsonPath("$.nutrition.calories").value(0));
+        mvc.perform(get("/api/v1/analytics/nutrition?from=2026-01-15&to=2026-01-15").header("Authorization","Bearer "+a.access())).andExpect(status().isOk()).andExpect(jsonPath("$.from").value("2026-01-15")).andExpect(jsonPath("$.daily[0].calories").value(400)).andExpect(jsonPath("$.totals.calories").value(400));
+        mvc.perform(get("/api/v1/analytics/progress?from=2026-01-15&to=2026-01-15").header("Authorization","Bearer "+a.access())).andExpect(status().isOk()).andExpect(jsonPath("$.activity[0].steps").value(100)).andExpect(jsonPath("$.body").isArray());
+        mvc.perform(get("/api/v1/analytics/weekly?from=2026-01-15&to=2026-01-15").header("Authorization","Bearer "+a.access())).andExpect(status().isOk()).andExpect(jsonPath("$.activity[0].steps").value(100)).andExpect(jsonPath("$.nutrition[0].calories").value(400));
+        mvc.perform(get("/api/v1/analytics/calendar?from=2026-01-15&to=2026-01-15").header("Authorization","Bearer "+a.access())).andExpect(status().isOk()).andExpect(jsonPath("$[0].summary.meals").value(1));
+        mvc.perform(get("/api/v1/analytics/analytics-does-not-exist").header("Authorization","Bearer "+a.access())).andExpect(status().isNotFound());
+        mvc.perform(get("/api/v1/analytics/progress?from=2026-02-01&to=2026-01-01").header("Authorization","Bearer "+a.access())).andExpect(status().isBadRequest()).andExpect(jsonPath("$.status").value(400));
+        mvc.perform(get("/api/v1/analytics/progress?from=2025-01-01&to=2026-01-02").header("Authorization","Bearer "+a.access())).andExpect(status().isBadRequest()).andExpect(jsonPath("$.status").value(400));
+        assertThat(jdbc.queryForObject("select count(*) from daily_metrics where user_id=?::uuid and steps=900",Integer.class,a.id()),is(0));
+    }
+
+    @Test void analyticsForeignUsageIsNotVisibleToAnotherUser() throws Exception {
+        Session a=registerSession("ai-usage-owner-"); Session b=registerSession("ai-usage-other-"); UUID request=UUID.randomUUID();
+        jdbc.update("insert into ai_usage(id,user_id,feature,model,provider,request_id,input_tokens,output_tokens,total_tokens,success,estimated_cost,latency_ms,error_category) values (?,?::uuid,'food_scan','fake','fake',?,2,3,5,true,?,7,null)",UUID.randomUUID(),a.id(),request,new java.math.BigDecimal("0.001"));
+        mvc.perform(get("/api/v1/analytics/ai-usage").header("Authorization","Bearer "+a.access())).andExpect(status().isOk()).andExpect(jsonPath("$[0].user_id").value(a.id())).andExpect(jsonPath("$[0].provider").value("fake"));
+        mvc.perform(get("/api/v1/analytics/ai-usage").header("Authorization","Bearer "+b.access())).andExpect(status().isOk()).andExpect(content().string(not(containsString(request.toString()))));
+        mvc.perform(post("/api/v1/ai-usage").header("Authorization","Bearer "+b.access()).contentType(MediaType.APPLICATION_JSON).content("{\"user_id\":\""+a.id()+"\",\"input_tokens\":999,\"estimated_cost\":99}")).andExpect(status().isForbidden());
+    }
+
 }

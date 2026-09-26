@@ -66,24 +66,29 @@ public class OpenAiProvider implements AiProvider {
                     foods.add(new FoodItem(name, grams, confidence));
             }
             if (foods.isEmpty()) throw new AiUnavailableException("No food could be identified in the image");
-            return new FoodAnalysis(visionModel, foods.stream().limit(12).toList());
+            return new FoodAnalysis(visionModel, foods.stream().limit(12).toList(), providerUsage(response, "openai-compatible", visionModel));
         } catch (AiUnavailableException e) { throw e;
         } catch (Exception e) { throw new AiUnavailableException("Food analysis provider is unavailable"); }
     }
+    private ProviderUsage providerUsage(JsonNode response,String provider,String model){JsonNode u=response==null?null:response.path("usage");return new ProviderUsage(provider,model,u==null?null:u.path("prompt_tokens").isMissingNode()?null:u.path("prompt_tokens").asInt(),u==null?null:u.path("completion_tokens").isMissingNode()?null:u.path("completion_tokens").asInt());}
 
     @Override
-    public String analyzeCoach(String context) {
+    public String analyzeCoach(String context) { return analyzeCoachWithMetadata(context).text(); }
+
+    @Override
+    public CoachAnalysis analyzeCoachWithMetadata(String context) {
         if (key.isBlank()) throw new AiUnavailableException("Coach AI is not configured");
         try {
             JsonNode response = client.post().uri("/chat/completions").header("Authorization", "Bearer " + key)
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(Map.of("model", visionModel, "messages", List.of(Map.of("role", "user", "content", context))))
                 .retrieve().body(JsonNode.class);
-            return response.at("/choices/0/message/content").asText();
+            JsonNode usage = response == null ? null : response.path("usage");
+            return new CoachAnalysis(visionModel, response.at("/choices/0/message/content").asText(), new ProviderUsage("openai-compatible", visionModel, usage == null ? null : usage.path("prompt_tokens").isMissingNode() ? null : usage.path("prompt_tokens").asInt(), usage == null ? null : usage.path("completion_tokens").isMissingNode() ? null : usage.path("completion_tokens").asInt()));
         } catch (Exception e) { throw new AiUnavailableException("Coach AI provider is unavailable"); }
     }
 
-    public static class AiUnavailableException extends IllegalStateException {
-        public AiUnavailableException(String message) { super(message); }
+    public static class AiUnavailableException extends AiProviderException {
+        public AiUnavailableException(String message) { super(message, "provider"); }
     }
 }

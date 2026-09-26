@@ -1,6 +1,7 @@
 package com.fittrack.scanner;
 
 import com.fittrack.ai.AiProvider;
+import com.fittrack.ai.AiUsageService;
 import com.fittrack.scanner.ScannerController.ConfirmRequest;
 import com.fittrack.scanner.ScannerController.ItemCorrection;
 import com.fittrack.storage.PrivateObjectStorage;
@@ -26,9 +27,10 @@ public class ScannerService {
     private final JdbcTemplate jdbc;
     private final PrivateObjectStorage storage;
     private final AiProvider ai;
+    private final AiUsageService usage;
 
-    public ScannerService(JdbcTemplate jdbc, PrivateObjectStorage storage, AiProvider ai) {
-        this.jdbc = jdbc; this.storage = storage; this.ai = ai;
+    public ScannerService(JdbcTemplate jdbc, PrivateObjectStorage storage, AiProvider ai, AiUsageService usage) {
+        this.jdbc = jdbc; this.storage = storage; this.ai = ai; this.usage = usage;
     }
 
     @Transactional
@@ -54,11 +56,20 @@ public class ScannerService {
             throw e;
         }
         try {
-            AiProvider.FoodAnalysis result = ai.analyzeFood(bytes, detected);
-            for (AiProvider.FoodItem item : result.items()) insertItem(id, item);
-            jdbc.update("UPDATE food_scans SET status='completed',model=?,error=NULL WHERE id=? AND user_id=?", result.model(), id, user);
-        } catch (RuntimeException e) {
-            jdbc.update("UPDATE food_scans SET status='failed',error=? WHERE id=? AND user_id=?", safeMessage(e), id, user);
+            AiUsageService.Attempt attempt = usage.start(principal, "food_scan");
+            try {
+                AiProvider.FoodAnalysis result = ai.analyzeFood(bytes, detected);
+                for (AiProvider.FoodItem item : result.items()) insertItem(id, item);
+                jdbc.update("UPDATE food_scans SET status='completed',model=?,error=NULL WHERE id=? AND user_id=?", result.model(), id, user);
+                usage.success(attempt, result.usage(), result.model());
+            } catch (RuntimeException e) {
+                usage.failure(attempt, e, null);
+                jdbc.update("UPDATE food_scans SET status='failed',error=? WHERE id=? AND user_id=?", safeMessage(e), id, user);
+            }
+        } catch (AiUsageService.QuotaExceededException e) {
+            usage.quotaRejected(principal, "food_scan", "quota");
+            jdbc.update("UPDATE food_scans SET status='failed',error=? WHERE id=? AND user_id=?", "AI request limit exceeded", id, user);
+            throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, "AI request limit exceeded");
         }
         return get(id, user.toString());
     }

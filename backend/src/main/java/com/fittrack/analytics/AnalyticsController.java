@@ -1,74 +1,49 @@
 package com.fittrack.analytics;
 
-import com.fittrack.api.CalendarController;
+import com.fittrack.analytics.AnalyticsDtos.*;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.format.annotation.DateTimeFormat;
 import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
+import java.math.BigDecimal;
 import java.util.*;
 
 @RestController
 @RequestMapping("/api/v1/analytics")
 public class AnalyticsController {
     private final JdbcTemplate jdbc;
-    public AnalyticsController(JdbcTemplate jdbc) { this.jdbc = jdbc; }
+    public AnalyticsController(JdbcTemplate jdbc){this.jdbc=jdbc;}
+    private LocalDate today(){return LocalDate.now(ZoneOffset.UTC);}
+    private LocalDate[] range(LocalDate from,LocalDate to,int defaultDays){LocalDate end=to==null?today():to,start=from==null?end.minusDays(defaultDays-1L):from;if(start.isAfter(end))throw new IllegalArgumentException("from must not be after to");if(ChronoUnit.DAYS.between(start,end)>365)throw new IllegalArgumentException("range must not exceed 366 days");return new LocalDate[]{start,end};}
+    private void authenticated(String u){if(u==null||u.isBlank())throw new IllegalArgumentException("Authenticated user is required");}
+    private Map<String,Object> one(String sql,Object... args){List<Map<String,Object>> rows=jdbc.queryForList(sql,args);return rows.isEmpty()?Map.of():rows.get(0);}
+    private long num(Map<String,Object> m,String k){Object v=m.get(k);return v==null?0:((Number)v).longValue();}
+    private Integer integer(Map<String,Object> m,String k){Object v=m.get(k);return v==null?null:((Number)v).intValue();}
+    private LocalDate mapDate(Object value){if(value instanceof LocalDate d)return d;if(value instanceof java.sql.Date d)return d.toLocalDate();return LocalDate.parse(value.toString());}
+    private Long nullableLong(Object value){return value==null?null:((Number)value).longValue();}
+    private BigDecimal bd(Map<String,Object> m,String k){Object v=m.get(k);return v==null?BigDecimal.ZERO:v instanceof BigDecimal b?b:new BigDecimal(v.toString());}
+    private ActivitySummary activitySummary(LocalDate d,String u){Map<String,Object> m=one("SELECT COALESCE(steps,0) steps,COALESCE(active_minutes,0) active_minutes,COALESCE(sleep_hours,0) sleep_hours,COALESCE(calories_burned,0) calories_burned,COALESCE(water_oz,0) water_oz,COALESCE(readiness,0) readiness FROM daily_metrics WHERE user_id=CAST(? AS uuid) AND metric_date=?",u,d);return new ActivitySummary(num(m,"steps"),num(m,"active_minutes"),bd(m,"sleep_hours"),num(m,"calories_burned"),num(m,"water_oz"),num(m,"readiness"));}
+    private NutritionSummary nutritionSummary(LocalDate d,String u){return nutritionSummaryBetween(d,d,u);}
+    private NutritionSummary nutritionSummaryBetween(LocalDate from,LocalDate to,String u){Map<String,Object> m=one("SELECT COALESCE(sum(calories),0) calories,COALESCE(sum(protein_g),0) protein_g,COALESCE(sum(carbs_g),0) carbs_g,COALESCE(sum(fat_g),0) fat_g FROM meals WHERE user_id=CAST(? AS uuid) AND meal_date BETWEEN ? AND ?",u,from,to);return new NutritionSummary(bd(m,"calories"),bd(m,"protein_g"),bd(m,"carbs_g"),bd(m,"fat_g"));}
+    private WorkoutSummary workoutSummary(LocalDate d,String u){Map<String,Object> m=one("SELECT count(*) sessions,COALESCE(sum(duration_minutes),0) minutes,COALESCE(sum(calories_burned),0) calories FROM workouts WHERE user_id=CAST(? AS uuid) AND workout_date=? AND completed=true",u,d);return new WorkoutSummary(num(m,"sessions"),num(m,"minutes"),num(m,"calories"));}
+    private BodySummary bodySummary(LocalDate d,String u){Map<String,Object> m=one("SELECT weight_lb,body_fat_pct FROM body_metrics WHERE user_id=CAST(? AS uuid) AND metric_date=?",u,d);return new BodySummary(bd(m,"weight_lb"),bd(m,"body_fat_pct"));}
+    private TargetSummary targetSummary(String u){Map<String,Object> m=one("SELECT step_target,calorie_target,protein_target_g,water_target_oz,target_weight_lb FROM fitness_profile WHERE user_id=CAST(? AS uuid)",u);return new TargetSummary(integer(m,"step_target"),integer(m,"calorie_target"),integer(m,"protein_target_g"),integer(m,"water_target_oz"),bd(m,"target_weight_lb"));}
+    private List<ActivityPoint> activityRows(LocalDate from,LocalDate to,String u){return jdbc.query("SELECT metric_date::date date,steps,active_minutes,sleep_hours,calories_burned FROM daily_metrics WHERE user_id=CAST(? AS uuid) AND metric_date BETWEEN ? AND ? ORDER BY metric_date",(rs,n)->new ActivityPoint(rs.getObject("date",LocalDate.class),nullableLong(rs.getObject("steps")),nullableLong(rs.getObject("active_minutes")),rs.getBigDecimal("sleep_hours"),nullableLong(rs.getObject("calories_burned"))),u,from,to);}
+    private List<BodyPoint> bodyRows(LocalDate from,LocalDate to,String u){return jdbc.query("SELECT metric_date::date date,weight_lb,body_fat_pct,waist_in FROM body_metrics WHERE user_id=CAST(? AS uuid) AND metric_date BETWEEN ? AND ? ORDER BY metric_date",(rs,n)->new BodyPoint(rs.getObject("date",LocalDate.class),rs.getBigDecimal("weight_lb"),rs.getBigDecimal("body_fat_pct"),rs.getBigDecimal("waist_in")),u,from,to);}
+    private List<WorkoutPoint> workoutRows(LocalDate from,LocalDate to,String u){return jdbc.query("SELECT workout_date::date date,count(*) FILTER (WHERE completed) sessions,COALESCE(sum(duration_minutes) FILTER (WHERE completed),0) minutes,COALESCE(sum(calories_burned) FILTER (WHERE completed),0) calories FROM workouts WHERE user_id=CAST(? AS uuid) AND workout_date BETWEEN ? AND ? GROUP BY workout_date ORDER BY workout_date",(rs,n)->new WorkoutPoint(rs.getObject("date",LocalDate.class),rs.getLong("sessions"),rs.getLong("minutes"),rs.getLong("calories")),u,from,to);}
+    private List<NutritionPoint> nutritionRows(LocalDate from,LocalDate to,String u){return jdbc.query("SELECT meal_date::date date,COALESCE(sum(calories),0) calories,COALESCE(sum(protein_g),0) protein_g,COALESCE(sum(carbs_g),0) carbs_g,COALESCE(sum(fat_g),0) fat_g FROM meals WHERE user_id=CAST(? AS uuid) AND meal_date BETWEEN ? AND ? GROUP BY meal_date ORDER BY meal_date",(rs,n)->new NutritionPoint(rs.getObject("date",LocalDate.class),rs.getBigDecimal("calories"),rs.getBigDecimal("protein_g"),rs.getBigDecimal("carbs_g"),rs.getBigDecimal("fat_g")),u,from,to);}
 
-    @GetMapping("/dashboard")
-    public Map<String,Object> dashboard(@AuthenticationPrincipal String user) {
-        LocalDate today=LocalDate.now();
-        Map<String,Object> result=new LinkedHashMap<>();
-        result.put("date",today);
-        result.put("activity",one("SELECT COALESCE(steps,0) steps,COALESCE(active_minutes,0) active_minutes,COALESCE(sleep_hours,0) sleep_hours,COALESCE(calories_burned,0) calories_burned,COALESCE(water_oz,0) water_oz,COALESCE(readiness,0) readiness FROM daily_metrics WHERE user_id=CAST(? AS uuid) AND metric_date=?",user,today));
-        result.put("nutrition",one("SELECT COALESCE(sum(calories),0) calories,COALESCE(sum(protein_g),0) protein_g,COALESCE(sum(carbs_g),0) carbs_g,COALESCE(sum(fat_g),0) fat_g FROM meals WHERE user_id=CAST(? AS uuid) AND meal_date=?",user,today));
-        result.put("workout",one("SELECT count(*) sessions,COALESCE(sum(duration_minutes),0) minutes,COALESCE(sum(calories_burned),0) calories FROM workouts WHERE user_id=CAST(? AS uuid) AND workout_date=? AND completed=true",user,today));
-        result.put("body",one("SELECT weight_lb,body_fat_pct FROM body_metrics WHERE user_id=CAST(? AS uuid) AND metric_date=?",user,today));
-        result.put("targets",one("SELECT step_target,calorie_target,protein_target_g,water_target_oz,target_weight_lb FROM fitness_profile WHERE user_id=CAST(? AS uuid)",user));
-        return result;
-    }
-
-    private LocalDate[] range(LocalDate from, LocalDate to, int defaultDays) {
-        LocalDate end = to == null ? LocalDate.now() : to;
-        LocalDate start = from == null ? end.minusDays(defaultDays - 1L) : from;
-        if (start.isAfter(end)) throw new IllegalArgumentException("from must not be after to");
-        if (ChronoUnit.DAYS.between(start, end) > 365) throw new IllegalArgumentException("range must not exceed 366 days");
-        return new LocalDate[]{start, end};
-    }
-    private void authenticated(String user) { if (user == null || user.isBlank()) throw new IllegalArgumentException("Authenticated user is required"); }
-
-    @GetMapping("/workouts")
-    public List<Map<String,Object>> workouts(@AuthenticationPrincipal String user, @RequestParam(required=false) @DateTimeFormat(iso=DateTimeFormat.ISO.DATE) LocalDate from, @RequestParam(required=false) @DateTimeFormat(iso=DateTimeFormat.ISO.DATE) LocalDate to) {
-        authenticated(user); LocalDate[] r=range(from,to,90);
-        return jdbc.queryForList("SELECT workout_date::date date,count(*) FILTER (WHERE completed) sessions,COALESCE(sum(duration_minutes) FILTER (WHERE completed),0) minutes,COALESCE(sum(calories_burned) FILTER (WHERE completed),0) calories FROM workouts WHERE user_id=CAST(? AS uuid) AND workout_date BETWEEN ? AND ? GROUP BY workout_date ORDER BY workout_date",user,r[0],r[1]);
-    }
-
-    @GetMapping("/nutrition")
-    public Map<String,Object> nutrition(@AuthenticationPrincipal String user, @RequestParam(required=false) @DateTimeFormat(iso=DateTimeFormat.ISO.DATE) LocalDate from, @RequestParam(required=false) @DateTimeFormat(iso=DateTimeFormat.ISO.DATE) LocalDate to) {
-        authenticated(user); LocalDate[] r=range(from,to,90); Map<String,Object> result=new LinkedHashMap<>(); result.put("from",r[0]); result.put("to",r[1]);
-        result.put("daily",jdbc.queryForList("SELECT meal_date::date date,COALESCE(sum(calories),0) calories,COALESCE(sum(protein_g),0) protein_g,COALESCE(sum(carbs_g),0) carbs_g,COALESCE(sum(fat_g),0) fat_g FROM meals WHERE user_id=CAST(? AS uuid) AND meal_date BETWEEN ? AND ? GROUP BY meal_date ORDER BY meal_date",user,r[0],r[1]));
-        result.put("totals",one("SELECT COALESCE(sum(calories),0) calories,COALESCE(sum(protein_g),0) protein_g,COALESCE(sum(carbs_g),0) carbs_g,COALESCE(sum(fat_g),0) fat_g FROM meals WHERE user_id=CAST(? AS uuid) AND meal_date BETWEEN ? AND ?",user,r[0],r[1])); return result;
-    }
-
-    @GetMapping("/progress")
-    public Map<String,Object> progress(@AuthenticationPrincipal String user, @RequestParam(required=false) @DateTimeFormat(iso=DateTimeFormat.ISO.DATE) LocalDate from, @RequestParam(required=false) @DateTimeFormat(iso=DateTimeFormat.ISO.DATE) LocalDate to) {
-        authenticated(user); LocalDate[] r=range(from,to,90); Map<String,Object> result=new LinkedHashMap<>(); result.put("from",r[0]); result.put("to",r[1]);
-        result.put("body",jdbc.queryForList("SELECT metric_date::date date,weight_lb,body_fat_pct,waist_in FROM body_metrics WHERE user_id=CAST(? AS uuid) AND metric_date BETWEEN ? AND ? ORDER BY metric_date",user,r[0],r[1]));
-        result.put("activity",jdbc.queryForList("SELECT metric_date::date date,steps,active_minutes,sleep_hours FROM daily_metrics WHERE user_id=CAST(? AS uuid) AND metric_date BETWEEN ? AND ? ORDER BY metric_date",user,r[0],r[1]));
-        result.put("target",one("SELECT target_weight_lb FROM fitness_profile WHERE user_id=CAST(? AS uuid)",user)); return result;
-    }
-
-    @GetMapping("/weekly")
-    public Map<String,Object> weekly(@AuthenticationPrincipal String user, @RequestParam(required=false) @DateTimeFormat(iso=DateTimeFormat.ISO.DATE) LocalDate from, @RequestParam(required=false) @DateTimeFormat(iso=DateTimeFormat.ISO.DATE) LocalDate to) {
-        authenticated(user); LocalDate[] r=range(from,to,7); Map<String,Object> result=new LinkedHashMap<>(); result.put("from",r[0]); result.put("to",r[1]);
-        result.put("activity",jdbc.queryForList("SELECT metric_date::date date,COALESCE(steps,0) steps,COALESCE(active_minutes,0) active_minutes,COALESCE(sleep_hours,0) sleep_hours,COALESCE(calories_burned,0) calories_burned FROM daily_metrics WHERE user_id=CAST(? AS uuid) AND metric_date BETWEEN ? AND ? ORDER BY metric_date",user,r[0],r[1]));
-        result.put("nutrition",jdbc.queryForList("SELECT meal_date::date date,COALESCE(sum(calories),0) calories,COALESCE(sum(protein_g),0) protein_g FROM meals WHERE user_id=CAST(? AS uuid) AND meal_date BETWEEN ? AND ? GROUP BY meal_date ORDER BY meal_date",user,r[0],r[1]));
-        result.put("workouts",jdbc.queryForList("SELECT workout_date::date date,count(*) FILTER (WHERE completed) sessions,COALESCE(sum(duration_minutes) FILTER (WHERE completed),0) minutes FROM workouts WHERE user_id=CAST(? AS uuid) AND workout_date BETWEEN ? AND ? GROUP BY workout_date ORDER BY workout_date",user,r[0],r[1])); return result;
-    }
-
-    @GetMapping("/activity") public List<Map<String,Object>> activity(@AuthenticationPrincipal String u,@RequestParam(required=false) @DateTimeFormat(iso=DateTimeFormat.ISO.DATE) LocalDate from,@RequestParam(required=false) @DateTimeFormat(iso=DateTimeFormat.ISO.DATE) LocalDate to){return (List<Map<String,Object>>) progress(u,from,to).get("activity");}
-    @GetMapping("/body") public List<Map<String,Object>> body(@AuthenticationPrincipal String u,@RequestParam(required=false) @DateTimeFormat(iso=DateTimeFormat.ISO.DATE) LocalDate from,@RequestParam(required=false) @DateTimeFormat(iso=DateTimeFormat.ISO.DATE) LocalDate to){return (List<Map<String,Object>>) progress(u,from,to).get("body");}
-    @GetMapping("/habits") public List<Map<String,Object>> habits(@AuthenticationPrincipal String u,@RequestParam(required=false) @DateTimeFormat(iso=DateTimeFormat.ISO.DATE) LocalDate from,@RequestParam(required=false) @DateTimeFormat(iso=DateTimeFormat.ISO.DATE) LocalDate to){authenticated(u);LocalDate[] r=range(from,to,7);return jdbc.queryForList("SELECT h.name,count(l.id) FILTER(WHERE l.completed) completed FROM habits h LEFT JOIN habit_logs l ON l.habit_id=h.id AND l.log_date BETWEEN ? AND ? WHERE h.user_id=CAST(? AS uuid) GROUP BY h.id,h.name ORDER BY h.name",r[0],r[1],u);}
-    @GetMapping("/calendar") public Object calendar(@AuthenticationPrincipal String u,@RequestParam(required=false) @DateTimeFormat(iso=DateTimeFormat.ISO.DATE) LocalDate from,@RequestParam(required=false) @DateTimeFormat(iso=DateTimeFormat.ISO.DATE) LocalDate to){authenticated(u);LocalDate[] r=range(from,to,31);return new CalendarController(jdbc).range(r[0],r[1],u);}
-    private Map<String,Object> one(String sql,Object... args){var rows=jdbc.queryForList(sql,args);return rows.isEmpty()?Map.of():rows.get(0);}
+    @GetMapping("/dashboard") public DashboardResponse dashboard(@AuthenticationPrincipal String u){authenticated(u);LocalDate d=today();return new DashboardResponse(d,activitySummary(d,u),nutritionSummary(d,u),workoutSummary(d,u),bodySummary(d,u),targetSummary(u));}
+    @GetMapping("/workouts") public List<WorkoutPoint> workouts(@AuthenticationPrincipal String u,@RequestParam(required=false) @DateTimeFormat(iso=DateTimeFormat.ISO.DATE) LocalDate from,@RequestParam(required=false) @DateTimeFormat(iso=DateTimeFormat.ISO.DATE) LocalDate to){authenticated(u);LocalDate[] r=range(from,to,90);return workoutRows(r[0],r[1],u);}
+    @GetMapping("/nutrition") public NutritionResponse nutrition(@AuthenticationPrincipal String u,@RequestParam(required=false) @DateTimeFormat(iso=DateTimeFormat.ISO.DATE) LocalDate from,@RequestParam(required=false) @DateTimeFormat(iso=DateTimeFormat.ISO.DATE) LocalDate to){authenticated(u);LocalDate[] r=range(from,to,90);return new NutritionResponse(r[0],r[1],nutritionRows(r[0],r[1],u),nutritionSummaryBetween(r[0],r[1],u));}
+    @GetMapping("/progress") public ProgressResponse progress(@AuthenticationPrincipal String u,@RequestParam(required=false) @DateTimeFormat(iso=DateTimeFormat.ISO.DATE) LocalDate from,@RequestParam(required=false) @DateTimeFormat(iso=DateTimeFormat.ISO.DATE) LocalDate to){authenticated(u);LocalDate[] r=range(from,to,90);return new ProgressResponse(r[0],r[1],bodyRows(r[0],r[1],u),activityRows(r[0],r[1],u),new TargetWeight(bd(one("SELECT target_weight_lb FROM fitness_profile WHERE user_id=CAST(? AS uuid)",u),"target_weight_lb")));}
+    @GetMapping("/weekly") public WeeklyResponse weekly(@AuthenticationPrincipal String u,@RequestParam(required=false) @DateTimeFormat(iso=DateTimeFormat.ISO.DATE) LocalDate from,@RequestParam(required=false) @DateTimeFormat(iso=DateTimeFormat.ISO.DATE) LocalDate to){authenticated(u);LocalDate[] r=range(from,to,7);return new WeeklyResponse(r[0],r[1],activityRows(r[0],r[1],u),nutritionRows(r[0],r[1],u),workoutRows(r[0],r[1],u));}
+    @GetMapping("/activity") public List<ActivityPoint> activity(@AuthenticationPrincipal String u,@RequestParam(required=false) @DateTimeFormat(iso=DateTimeFormat.ISO.DATE) LocalDate from,@RequestParam(required=false) @DateTimeFormat(iso=DateTimeFormat.ISO.DATE) LocalDate to){authenticated(u);LocalDate[] r=range(from,to,90);return activityRows(r[0],r[1],u);}
+    @GetMapping("/body") public List<BodyPoint> body(@AuthenticationPrincipal String u,@RequestParam(required=false) @DateTimeFormat(iso=DateTimeFormat.ISO.DATE) LocalDate from,@RequestParam(required=false) @DateTimeFormat(iso=DateTimeFormat.ISO.DATE) LocalDate to){authenticated(u);LocalDate[] r=range(from,to,90);return bodyRows(r[0],r[1],u);}
+    @GetMapping("/habits") public List<HabitPoint> habits(@AuthenticationPrincipal String u,@RequestParam(required=false) @DateTimeFormat(iso=DateTimeFormat.ISO.DATE) LocalDate from,@RequestParam(required=false) @DateTimeFormat(iso=DateTimeFormat.ISO.DATE) LocalDate to){authenticated(u);LocalDate[] r=range(from,to,7);return jdbc.query("SELECT h.name,count(l.id) FILTER(WHERE l.completed) completed FROM habits h LEFT JOIN habit_logs l ON l.habit_id=h.id AND l.log_date BETWEEN ? AND ? WHERE h.user_id=CAST(? AS uuid) GROUP BY h.id,h.name ORDER BY h.name",(rs,n)->new HabitPoint(rs.getString("name"),rs.getLong("completed")),r[0],r[1],u);}
+    @GetMapping("/ai-usage") public List<AiUsageView> usage(@AuthenticationPrincipal String u){authenticated(u);return jdbc.query("SELECT id,user_id,feature,model,provider,request_id,input_tokens,output_tokens,total_tokens,success,estimated_cost,latency_ms,error_category,created_at FROM ai_usage WHERE user_id=CAST(? AS uuid) ORDER BY created_at DESC LIMIT 100",(rs,n)->new AiUsageView(rs.getObject("id",UUID.class),UUID.fromString(rs.getString("user_id")),rs.getString("feature"),rs.getString("model"),rs.getString("provider"),rs.getObject("request_id",UUID.class),rs.getObject("input_tokens",Integer.class),rs.getObject("output_tokens",Integer.class),rs.getObject("total_tokens",Integer.class),rs.getBoolean("success"),rs.getBigDecimal("estimated_cost"),rs.getObject("latency_ms",Long.class),rs.getString("error_category")),u);}
+    @GetMapping("/calendar") public List<CalendarDay> calendar(@AuthenticationPrincipal String u,@RequestParam(required=false) @DateTimeFormat(iso=DateTimeFormat.ISO.DATE) LocalDate from,@RequestParam(required=false) @DateTimeFormat(iso=DateTimeFormat.ISO.DATE) LocalDate to){authenticated(u);LocalDate[] r=range(from,to,31);List<Map<String,Object>> raw=new com.fittrack.api.CalendarController(jdbc).range(r[0],r[1],u);return raw.stream().map(x->new CalendarDay(mapDate(x.get("date")),new CalendarSummary(num((Map<String,Object>)x.get("summary"),"steps"),num((Map<String,Object>)x.get("summary"),"water_oz"),num((Map<String,Object>)x.get("summary"),"calories_burned"),num((Map<String,Object>)x.get("summary"),"active_minutes"),bd((Map<String,Object>)x.get("summary"),"sleep_hours"),num((Map<String,Object>)x.get("summary"),"workouts"),num((Map<String,Object>)x.get("summary"),"meals"),num((Map<String,Object>)x.get("summary"),"habits_completed")))).toList();}
 }

@@ -37,6 +37,13 @@ app:
   ai-key: ${OPENAI_API_KEY:}
   ai-vision-model: ${AI_VISION_MODEL:gpt-4o-mini}
   ai-text-model: ${AI_TEXT_MODEL:gpt-4o-mini}
+  ai-limits:
+    requests-per-minute: ${AI_REQUESTS_PER_MINUTE:10}
+    requests-per-day: ${AI_REQUESTS_PER_DAY:100}
+    tokens-per-day: ${AI_TOKENS_PER_DAY:0}
+    pricing:
+      input-per-million: ${AI_INPUT_PRICE_PER_MILLION:0}
+      output-per-million: ${AI_OUTPUT_PRICE_PER_MILLION:0}
 management:
   endpoints:
     web:

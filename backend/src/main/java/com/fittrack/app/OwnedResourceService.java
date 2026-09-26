@@ -182,7 +182,7 @@ public class OwnedResourceService {
     }
 
     private Spec writable(Spec spec) {
-        if (spec.scope() == Scope.CATALOG) throw new org.springframework.security.access.AccessDeniedException("Catalog is read-only");
+        if (spec.scope() == Scope.CATALOG || "ai_usage".equals(spec.table())) throw new org.springframework.security.access.AccessDeniedException("Resource is read-only");
         return spec;
     }
     private Spec require(String resource) {

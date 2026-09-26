@@ -28,6 +28,18 @@ public class AiUsage {
     private String model;
     public String getModel() { return model; }
     public void setModel(String value) { model = value; }
+    @Column(name = "provider")
+    private String provider;
+    public String getProvider() { return provider; }
+    public void setProvider(String value) { provider = value; }
+    @Column(name = "request_id")
+    private UUID requestId;
+    public UUID getRequestId() { return requestId; }
+    public void setRequestId(UUID value) { requestId = value; }
+    @Column(name = "total_tokens")
+    private Integer totalTokens;
+    public Integer getTotalTokens() { return totalTokens; }
+    public void setTotalTokens(Integer value) { totalTokens = value; }
     @Column(name = "input_tokens")
     private Integer inputTokens;
     public Integer getInputTokens() { return inputTokens; }
@@ -40,6 +52,14 @@ public class AiUsage {
     private Boolean success;
     public Boolean getSuccess() { return success; }
     public void setSuccess(Boolean value) { success = value; }
+    @Column(name = "latency_ms")
+    private Long latencyMs;
+    public Long getLatencyMs() { return latencyMs; }
+    public void setLatencyMs(Long value) { latencyMs = value; }
+    @Column(name = "error_category")
+    private String errorCategory;
+    public String getErrorCategory() { return errorCategory; }
+    public void setErrorCategory(String value) { errorCategory = value; }
     @Column(name = "estimated_cost")
     private BigDecimal estimatedCost;
     public BigDecimal getEstimatedCost() { return estimatedCost; }
