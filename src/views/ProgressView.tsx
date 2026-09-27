@@ -16,7 +16,7 @@ import {
 import { apiData, type DailyMetric, type Workout, type BodyMetric, type PersonalRecord } from "../lib/api/dataAdapter";
 import type { Goal } from "../lib/types";
 import { BarChart, EmptyState, Modal, SectionHeader, ProgressRing } from "../components/ui";
-import { formatDate, round } from "../lib/utils";
+import { formatDate, round, todayISO } from "../lib/utils";
 import {
   weeklyVolumeSeries, muscleDistribution, underTrainedMuscles, rollingAverage,
   type SessionWithDetail,
@@ -85,25 +85,30 @@ export default function ProgressView({ metrics, workouts, records, body, session
   async function saveBody() {
     setSaving(true);
     setError(null);
-    const { error: insertError } = await apiData.from("body_metrics").upsert(
-      {
-        metric_date: new Date().toISOString().split("T")[0],
+    try {
+      // A POST, not an upsert: the adapter has no row id to address, and the server resolves a
+      // repeat for the same day to the existing row, so one measurement per day still holds.
+      const { error: insertError } = await apiData.from("body_metrics").insert({
+        metric_date: todayISO(),
         weight_lb: Number(form.weight_lb),
         body_fat_pct: Number(form.body_fat_pct),
         waist_in: Number(form.waist_in),
         chest_in: Number(form.chest_in),
         arm_in: Number(form.arm_in),
         thigh_in: Number(form.thigh_in),
-      },
-      { onConflict: "metric_date" }
-    );
-    setSaving(false);
-    if (insertError) {
+      });
+      if (insertError) {
+        setError("Those measurements could not be saved. Please try again.");
+        return;
+      }
+      setOpenBody(false);
+      onRefresh();
+    } catch {
       setError("Those measurements could not be saved. Please try again.");
-      return;
+    } finally {
+      // finally, so a thrown request can never leave the button stuck on "Saving".
+      setSaving(false);
     }
-    setOpenBody(false);
-    onRefresh();
   }
 
   const monthlyReview = buildMonthlyReview(metrics, workouts, records, weightChange);

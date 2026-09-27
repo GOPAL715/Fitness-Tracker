@@ -5,6 +5,9 @@ import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -72,6 +75,21 @@ public class OwnedResourceService {
      */
     private static final Map<String, List<String>> LIST_COLUMNS = Map.of(
             "exercises", List.of("secondary_muscles"));
+
+    /**
+     * The goal statuses the product actually uses.
+     *
+     * <p>Not invented here: the Goals screen filters on exactly these two literals and writes exactly
+     * these two, so anything else is a client bug rather than a state the application can render.
+     */
+    private static final Set<String> GOAL_STATUSES = Set.of("active", "achieved");
+
+    /**
+     * The goal types the product offers, taken from the client's own list so the two cannot drift.
+     */
+    private static final Set<String> GOAL_TYPES = Set.of("Lose Weight", "Build Muscle", "Build Strength",
+            "Improve Endurance", "Improve Fitness", "Maintain Weight", "Increase Steps", "Improve Sleep",
+            "Improve Nutrition", "Custom");
 
     /** Upper bound on any list result, so no endpoint can return an unbounded set. */
     static final int MAX_PAGE = 500;
@@ -168,17 +186,130 @@ public class OwnedResourceService {
         return rows.isEmpty() ? null : rows.get(0);
     }
 
+    /**
+     * Enforces the structural contract of the resources whose shapes the client depends on.
+     *
+     * <p>Only rules the product already defines are applied: a goal needs a title, must use one of the
+     * two statuses the Goals screen renders, and needs a start and target that actually differ. Numeric
+     * magnitudes are deliberately not bounded, because the product never defines a range for a goal.
+     *
+     * <p>Body metrics are validated here rather than left to the database, so a malformed date or a
+     * non-positive weight is a 400 rather than an opaque 500 from a check constraint.
+     */
+    private static void checkContract(Spec spec, Map<String, Object> values, boolean creating) {
+        if ("goals".equals(spec.table())) {
+            // Only on create: an update is a partial patch, so a caller changing just the progress
+            // or status does not have to resend the title.
+            if (creating) requireNonBlank(values, "title");
+            if (values.containsKey("status") && values.get("status") != null
+                    && !GOAL_STATUSES.contains(String.valueOf(values.get("status")))) {
+                throw new IllegalArgumentException("status must be one of " + String.join(", ", GOAL_STATUSES));
+            }
+            if (values.containsKey("goal_type") && values.get("goal_type") != null
+                    && !GOAL_TYPES.contains(String.valueOf(values.get("goal_type")))) {
+                throw new IllegalArgumentException("goal_type is not a supported goal type");
+            }
+            if (values.containsKey("start_date") && values.containsKey("target_date")
+                    && values.get("start_date") != null && values.get("target_date") != null
+                    && ((LocalDate) values.get("start_date")).isAfter((LocalDate) values.get("target_date"))) {
+                throw new IllegalArgumentException("start_date must not be after target_date");
+            }
+            // A goal with no start cannot be projected, and one that starts and ends in the same place
+            // has no distance to travel; both are rejected the moment they would be persisted.
+            if (creating) {
+                if (values.get("start_value") == null || values.get("target_value") == null) {
+                    throw new IllegalArgumentException("start_value and target_value are required");
+                }
+                if (new BigDecimal(values.get("start_value").toString())
+                        .compareTo(new BigDecimal(values.get("target_value").toString())) == 0) {
+                    throw new IllegalArgumentException("target_value must differ from start_value");
+                }
+            }
+        }
+        if ("body_metrics".equals(spec.table())) {
+            if (creating && values.get("metric_date") == null) {
+                throw new IllegalArgumentException("metric_date is required");
+            }
+            // Mirrors ck_body_metrics_weight so the client gets a 400 instead of a 500.
+            if (values.get("weight_lb") != null
+                    && new BigDecimal(values.get("weight_lb").toString()).signum() <= 0) {
+                throw new IllegalArgumentException("weight_lb must be greater than zero");
+            }
+        }
+    }
+
+    private static void requireNonBlank(Map<String, Object> values, String column) {
+        Object value = values.get(column);
+        if (value == null || String.valueOf(value).trim().isEmpty()) {
+            throw new IllegalArgumentException(column + " is required");
+        }
+    }
+
+    /** The caller's existing body metric for one day, or null when they have not recorded it. */
+    private Map<String, Object> existingForDate(Spec spec, UUID user, Object metricDate) {
+        if (metricDate == null) return null;
+        // The driver hands back java.sql.Date for a date column, so the comparison is done in SQL
+        // rather than in Java; comparing a java.sql.Date to a LocalDate would never match.
+        List<Map<String, Object>> rows = jdbc.queryForList(
+                "SELECT * FROM " + spec.table() + " WHERE " + USER_ID + "=:uid AND metric_date=CAST(:d AS date) LIMIT 1",
+                new MapSqlParameterSource("uid", user).addValue("d", metricDate));
+        return rows.isEmpty() ? null : rows.get(0);
+    }
+
+    /**
+     * Overwrites an owned row with a full column set and returns the stored result.
+     *
+     * <p>Ownership is re-checked through {@code one}, so this can only ever touch the caller's own row.
+     */
+    private Map<String, Object> replace(Spec spec, String id, Map<String, Object> values, String user) {
+        String resource = resourceName(spec);
+        one(resource, id, user);
+        String assignments = values.keySet().stream()
+                .filter(name -> !"id".equals(name) && !USER_ID.equals(name))
+                .map(name -> name + "=:" + name).collect(Collectors.joining(","));
+        var params = new MapSqlParameterSource(values).addValue("id", uuid(id, "resource id"));
+        jdbc.update("UPDATE " + spec.table() + " SET " + assignments + " WHERE id=:id", params);
+        return one(resource, id, user);
+    }
+
+    /** The API resource name for a table, used where an id-level read has to be re-checked. */
+    private static String resourceName(Spec spec) {
+        return "body_metrics".equals(spec.table()) ? "body-metrics" : spec.table();
+    }
+
     @Transactional
     public Map<String, Object> create(String resource, Map<String, Object> body, String user) {
         Spec spec = writable(require(resource));
         Map<String, Object> values = values(spec, body, true);
         if (spec.scope() == Scope.USER) values.put(USER_ID, uuid(user, "user id"));
         else proveParent(spec.scope(), values, user);
+        // A goal is projected from the day it started, and the client never sends that date, so an
+        // absent one is stamped from the server clock rather than left null and unprojectable.
+        if ("goals".equals(spec.table()) && values.get("start_date") == null) {
+            values.put("start_date", LocalDate.now(ZoneOffset.UTC));
+        }
         // A singleton resource is one row per user, so creating a second one is a client error rather
         // than a unique-constraint violation. Reporting it as such keeps the 400 contract instead of
         // surfacing a 500 from the database.
         if (spec.singleton() && spec.scope() == Scope.USER && existingForUser(spec, user) != null) {
             throw new IllegalArgumentException(resource + " already exists for this account");
+        }
+        // A body metric is one row per user per day, so a second measurement for the same day is an
+        // update of that row rather than a conflict. Resolving it here keeps the unique constraint
+        // intact without the client needing a row id it does not have.
+        if ("body_metrics".equals(spec.table())) {
+            Map<String, Object> existing = existingForDate(spec, uuid(user, "user id"), values.get("metric_date"));
+            if (existing != null) {
+                // Only the writable columns are carried forward; the stored row also holds columns
+                // such as source and provider_record_id that this resource does not accept.
+                Map<String, Object> merged = new LinkedHashMap<>();
+                for (String column : spec.columns()) {
+                    if (existing.containsKey(column)) merged.put(column, existing.get(column));
+                }
+                merged.putAll(values);
+                // The driver returns the id as a UUID; the rest of the service works in strings.
+                return replace(spec, String.valueOf(existing.get("id")), merged, user);
+            }
         }
         String columns = String.join(",", values.keySet());
         String parameters = values.keySet().stream().map(name -> ":" + name).collect(Collectors.joining(","));
@@ -260,7 +391,15 @@ public class OwnedResourceService {
             if (!spec.columns().contains(name)) throw new IllegalArgumentException("Unsupported field: " + name);
             Object value = entry.getValue();
             if (name.endsWith("_date") || name.equals("metric_date") || name.equals("achieved_date") || name.equals("log_date") || name.equals("start_date") || name.equals("target_date")) {
-                if (value instanceof String text) value = java.time.LocalDate.parse(text);
+                if (value instanceof String text) {
+                    // A malformed date is a client error, so it is reported as one rather than
+                    // escaping as an internal error from the parser.
+                    try {
+                        value = java.time.LocalDate.parse(text);
+                    } catch (java.time.format.DateTimeParseException e) {
+                        throw new IllegalArgumentException(name + " must be a valid date");
+                    }
+                }
             } else if (name.endsWith("_lb") || name.endsWith("_g") || name.endsWith("_value") || name.endsWith("_miles") || name.endsWith("_minutes") || name.endsWith("_calories") || name.endsWith("_steps") || name.endsWith("_oz") || name.endsWith("_hours") || name.endsWith("_reps") || name.endsWith("_weight")) {
                 if (value instanceof String text) value = new java.math.BigDecimal(text);
             } else if (name.endsWith("_completed") || name.endsWith("_active") || name.endsWith("_enabled") || name.endsWith("_read") || name.endsWith("_favorite")) {
@@ -279,6 +418,7 @@ public class OwnedResourceService {
         }
         if (creating && result.isEmpty()) throw new IllegalArgumentException("At least one field is required");
         checkBounds(spec, result);
+        checkContract(spec, result, creating);
         return result;
     }
 

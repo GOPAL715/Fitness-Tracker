@@ -52,6 +52,7 @@ export function computeGoalProgress(goal: Goal): GoalProgress {
 export default function GoalsView({ goals, onRefresh }: Props) {
   const [openNew, setOpenNew] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<Goal | null>(null);
 
@@ -91,43 +92,84 @@ export default function GoalsView({ goals, onRefresh }: Props) {
     setSaving(true);
     setError(null);
 
-    const { error: insertError } = await apiData.from("goals").insert({
-      goal_type: form.goal_type,
-      title: form.title.trim(),
-      description: form.description.trim(),
-      start_value: Number(form.start_value),
-      target_value: Number(form.target_value),
-      current_value: Number(form.current_value),
-      unit: form.unit.trim(),
-      target_date: form.target_date || null,
-      status: "active",
-    });
+    try {
+      const { error: insertError } = await apiData.from("goals").insert({
+        goal_type: form.goal_type,
+        title: form.title.trim(),
+        description: form.description.trim(),
+        start_value: Number(form.start_value),
+        target_value: Number(form.target_value),
+        current_value: Number(form.current_value),
+        unit: form.unit.trim(),
+        target_date: form.target_date || null,
+        status: "active",
+      });
 
-    setSaving(false);
-    if (insertError) {
+      if (insertError) {
+        setError("That goal could not be saved. Please try again.");
+        return;
+      }
+      setForm({ goal_type: "Build Strength", title: "", description: "", start_value: 0, target_value: 100, current_value: 0, unit: "lbs", target_date: "" });
+      setOpenNew(false);
+      onRefresh();
+    } catch {
       setError("That goal could not be saved. Please try again.");
-      return;
+    } finally {
+      // finally, so a thrown request can never leave the button stuck on "Saving".
+      setSaving(false);
     }
-    setForm({ goal_type: "Build Strength", title: "", description: "", start_value: 0, target_value: 100, current_value: 0, unit: "lbs", target_date: "" });
-    setOpenNew(false);
-    onRefresh();
   }
 
-  async function updateProgress(goal: Goal, value: number) {
+  /**
+   * Runs a single-goal mutation, reporting a failure instead of refreshing anyway.
+   *
+   * <p>The adapter reports problems through `error` rather than throwing, so it has to be read
+   * explicitly; the previous fire-and-forget calls refreshed unconditionally, so a failed delete
+   * looked like it had worked. The row is marked busy while in flight so it cannot stay disabled.
+   */
+  async function runGoalMutation(id: string, failure: string, action: () => PromiseLike<{ error: unknown }>) {
+    setBusyId(id);
+    setError(null);
+    try {
+      const { error: mutationError } = await action();
+      if (mutationError) {
+        setError(failure);
+        return;
+      }
+      onRefresh();
+    } catch {
+      setError(failure);
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  function updateProgress(goal: Goal, value: number) {
     if (!Number.isFinite(value)) return;
     const reached =
       goal.target_value >= goal.start_value ? value >= goal.target_value : value <= goal.target_value;
-    await apiData
-      .from("goals")
-      .update({ current_value: value, status: reached ? "achieved" : "active" })
-      .eq("id", goal.id);
-    onRefresh();
+    return runGoalMutation(goal.id, "That goal could not be updated. Please try again.", () =>
+      apiData
+        .from("goals")
+        .update({ current_value: value, status: reached ? "achieved" : "active" })
+        .eq("id", goal.id)
+    );
   }
 
   async function deleteGoal(goal: Goal) {
-    await apiData.from("goals").delete().eq("id", goal.id);
-    setConfirmDelete(null);
-    onRefresh();
+    try {
+      const { error: deleteError } = await apiData.from("goals").delete().eq("id", goal.id);
+      if (deleteError) {
+        setError("That goal could not be deleted. Please try again.");
+        return;
+      }
+      setConfirmDelete(null);
+      onRefresh();
+    } catch {
+      setError("That goal could not be deleted. Please try again.");
+    } finally {
+      setBusyId(null);
+    }
   }
 
   return (
@@ -207,10 +249,10 @@ export default function GoalsView({ goals, onRefresh }: Props) {
                   </div>
 
                   <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                    <button className="btn btn-secondary btn-sm" onClick={() => updateProgress(g, g.target_value)}>
+                    <button className="btn btn-secondary btn-sm" disabled={busyId === g.id} onClick={() => updateProgress(g, g.target_value)}>
                       <Check size={14} /> Mark achieved
                     </button>
-                    <button className="btn btn-secondary btn-sm" onClick={() => setConfirmDelete(g)} aria-label="Delete goal">
+                    <button className="btn btn-secondary btn-sm" disabled={busyId === g.id} onClick={() => setConfirmDelete(g)} aria-label="Delete goal">
                       <Trash2 size={14} color="#f87171" />
                     </button>
                     {g.target_date && <span className="stat-meta">Target date {g.target_date}</span>}
@@ -240,7 +282,7 @@ export default function GoalsView({ goals, onRefresh }: Props) {
                     <div style={{ fontSize: 20, fontWeight: 800, color: "#f0f6fc" }}>
                       {g.current_value} <span className="stat-unit">{g.unit}</span>
                     </div>
-                    <button className="btn btn-secondary btn-sm" style={{ marginTop: 12 }} onClick={() => setConfirmDelete(g)}>
+                    <button className="btn btn-secondary btn-sm" style={{ marginTop: 12 }} disabled={busyId === g.id} onClick={() => setConfirmDelete(g)}>
                       <Trash2 size={14} color="#f87171" /> Remove
                     </button>
                   </div>
@@ -249,6 +291,13 @@ export default function GoalsView({ goals, onRefresh }: Props) {
             </div>
           )}
         </>
+      )}
+
+      {/* Row mutations report here, so a failed update or delete is never silent. */}
+      {error && !openNew && (
+        <div className="form-error" role="alert" style={{ marginBottom: 12 }}>
+          <span>{error}</span>
+        </div>
       )}
 
       {openNew && (
@@ -330,7 +379,7 @@ export default function GoalsView({ goals, onRefresh }: Props) {
           </div>
           <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
             <button className="btn btn-secondary" onClick={() => setConfirmDelete(null)}>Keep it</button>
-            <button className="btn btn-danger" onClick={() => deleteGoal(confirmDelete)}>Delete goal</button>
+            <button className="btn btn-danger" disabled={busyId === confirmDelete.id} onClick={() => deleteGoal(confirmDelete)}>Delete goal</button>
           </div>
         </Modal>
       )}
