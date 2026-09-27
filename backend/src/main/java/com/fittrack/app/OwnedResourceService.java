@@ -52,6 +52,20 @@ public class OwnedResourceService {
                     "water_target_oz", Bound.atLeast(0),
                     "sleep_target_hours", Bound.between(0, 24)));
 
+    /**
+     * Columns stored as a comma-separated string but exposed as an array in the JSON contract,
+     * keyed by table then column.
+     *
+     * <p>The exercise catalog is the case that matters: {@code secondary_muscles} is text in
+     * PostgreSQL, while the declared type is {@code string[]}. Normalising on read keeps the stored
+     * format and the database column unchanged, and makes every read of the resource agree.
+     *
+     * <p>The splitting itself is shared with {@link AppDataService#splitCsv(Object)}, so the list and
+     * detail endpoints cannot drift apart from the app-data read.
+     */
+    private static final Map<String, List<String>> LIST_COLUMNS = Map.of(
+            "exercises", List.of("secondary_muscles"));
+
     /** Upper bound on any list result, so no endpoint can return an unbounded set. */
     static final int MAX_PAGE = 500;
 
@@ -96,7 +110,8 @@ public class OwnedResourceService {
             params.addValue("uid", uuid(user, "user id"));
             predicate = childJoin(spec.scope()) + "t.id=t.id";
         }
-        return jdbc.queryForList("SELECT t.* FROM " + spec.table() + " t" + predicate + " ORDER BY t.id DESC LIMIT " + MAX_PAGE, params);
+        return jdbc.queryForList("SELECT t.* FROM " + spec.table() + " t" + predicate + " ORDER BY t.id DESC LIMIT " + MAX_PAGE, params)
+                .stream().map(row -> listColumns(spec, row)).toList();
     }
 
     public Map<String, Object> get(String resource, String id, String user) { return one(resource, id, user); }
@@ -116,7 +131,26 @@ public class OwnedResourceService {
             predicate = childJoin(spec.scope()) + "t.id=:id";
         }
         return jdbc.queryForList("SELECT t.* FROM " + spec.table() + " t" + predicate + " LIMIT " + MAX_PAGE, params)
-            .stream().findFirst().orElseThrow(() -> new NoSuchElementException("Resource not found"));
+            .stream().findFirst().map(row -> listColumns(spec, row))
+            .orElseThrow(() -> new NoSuchElementException("Resource not found"));
+    }
+
+    /**
+     * Replaces any declared list column with its split form, so every read of a resource returns the
+     * same shape regardless of which endpoint served it.
+     *
+     * <p>The row is copied rather than mutated, so the caller's map and the read-only result stay
+     * independent. Resources with no declared list columns are returned untouched, which is why this
+     * is safe to apply to every resource.
+     */
+    private static Map<String, Object> listColumns(Spec spec, Map<String, Object> row) {
+        List<String> columns = LIST_COLUMNS.get(spec.table());
+        if (columns == null) return row;
+        Map<String, Object> copy = new LinkedHashMap<>(row);
+        for (String column : columns) {
+            if (copy.containsKey(column)) copy.put(column, AppDataService.splitCsv(copy.get(column)));
+        }
+        return copy;
     }
 
     /** The caller's existing row for a singleton resource, or null when there is none. */
@@ -159,9 +193,12 @@ public class OwnedResourceService {
 
     @Transactional
     public void delete(String resource, String id, String user) {
+        // The same guard as create and update: a read-only resource must not be deletable either.
+        // Without it, DELETE removed shared catalog rows such as exercises and foods.
+        Spec spec = writable(require(resource));
         one(resource, id, user);
-        jdbc.update("DELETE FROM " + require(resource).table() + " WHERE id=:id",
-            new MapSqlParameterSource("id", uuid(id, "resource id")));
+        jdbc.update("DELETE FROM " + spec.table() + " WHERE id=:id",
+                new MapSqlParameterSource("id", uuid(id, "resource id")));
     }
 
 
