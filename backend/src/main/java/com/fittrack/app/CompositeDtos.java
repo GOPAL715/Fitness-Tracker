@@ -62,6 +62,17 @@ public final class CompositeDtos {
             @NotNull @Valid TemplateData template,
             @NotNull @Size(min=1, max=100) List<@Valid TemplateExerciseData> exercises) {}
 
+    /**
+     * Replaces an existing template and its exercise rows in one transaction.
+     *
+     * <p>The id is deliberately absent from the body: it comes from the path and is resolved against
+     * the authenticated user, so a client can never redirect the write at another account.
+     */
+    @JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)
+    public record WorkoutTemplateUpdateRequest(
+            @NotNull @Valid TemplateData template,
+            @NotNull @Size(min=1, max=100) List<@Valid TemplateExerciseData> exercises) {}
+
     @JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)
     public record MealData(
             @NotNull LocalDate mealDate,

@@ -15,4 +15,11 @@ export const workoutTemplateExercisesApi = resourceApi<unknown>("workout-templat
 export const exerciseSetsApi = resourceApi<unknown>("exercise-sets");
 export const completeWorkoutSession = (payload: unknown) => apiClient("/workout-sessions/complete", { method: "POST", ...json(payload) });
 export const completeWorkoutTemplate = (payload: unknown) => apiClient("/workout-templates/complete", { method: "POST", ...json(payload) });
+/**
+ * Replaces an existing template and its exercises in a single transaction.
+ *
+ * <p>Used for edits so a rejected exercise cannot leave the template with no exercises, which is what
+ * a separate update-then-delete-then-insert sequence allowed.
+ */
+export const updateWorkoutTemplate = (id: string, payload: unknown) => apiClient(`/workout-templates/${id}/complete`, { method: "PUT", ...json(payload) });
 export const planSessionsApi = resourceApi<unknown>("plan-sessions");

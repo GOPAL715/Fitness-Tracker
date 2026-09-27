@@ -50,7 +50,14 @@ public class OwnedResourceService {
                     "calorie_target", Bound.atLeast(0),
                     "protein_target_g", Bound.atLeast(0),
                     "water_target_oz", Bound.atLeast(0),
-                    "sleep_target_hours", Bound.between(0, 24)));
+                    "sleep_target_hours", Bound.between(0, 24)),
+            // Sets are created only through the composite endpoint, which validates its own DTO, so
+            // there is no generic write path here to bound. Quick-logged workouts are not.
+            "workouts", Map.of(
+                    "duration_minutes", Bound.between(0, 1440),
+                    "calories_burned", Bound.atLeast(0),
+                    "perceived_effort", Bound.between(1, 10),
+                    "distance_miles", Bound.atLeast(0)));
 
     /**
      * Columns stored as a comma-separated string but exposed as an array in the JSON contract,

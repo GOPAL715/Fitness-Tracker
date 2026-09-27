@@ -19,8 +19,11 @@ public class CompositeService {
         UUID user = owner(userId);
         UUID session = UUID.randomUUID();
         var s = request.session();
-        jdbc.update("INSERT INTO workout_sessions(id,user_id,title,workout_type,duration_minutes,perceived_effort,notes,completed,completed_at) VALUES (?,?::uuid,?,?,?,?,?,?,?)",
-                session,user,s.title(),s.workoutType(),s.durationMinutes(),s.perceivedEffort(),s.notes(),s.completed(),s.completed()?java.sql.Timestamp.from(Instant.now()):null);
+        // started_at is server-generated, never client-supplied: the calendar, set tracking and
+        // metrics all read it as the session date, and a null value would break them.
+        java.sql.Timestamp now = java.sql.Timestamp.from(Instant.now());
+        jdbc.update("INSERT INTO workout_sessions(id,user_id,title,workout_type,started_at,duration_minutes,perceived_effort,notes,completed,completed_at) VALUES (?,?::uuid,?,?,?,?,?,?,?,?)",
+                session,user,s.title(),s.workoutType(),now,s.durationMinutes(),s.perceivedEffort(),s.notes(),s.completed(),s.completed()?now:null);
         int childCount=0;
         for (SessionExerciseData e : request.exercises()) {
             requireCatalog("exercises", e.exerciseId());
@@ -32,6 +35,44 @@ public class CompositeService {
             }
         }
         return new CompositeResponse(session,"workout_session",childCount);
+    }
+
+    /**
+     * Replaces an existing template and all of its exercise rows atomically.
+     *
+     * <p>The previous approach updated the parent, deleted the children and re-inserted them as three
+     * separate requests, so a failure between them left the template with no exercises. Doing it in
+     * one transaction means a rejected exercise, a bad id or a vanished template rolls the whole
+     * change back and the stored template is left exactly as it was.
+     *
+     * <p>Ownership is resolved from the authenticated user before anything is written, so another
+     * account's template is not even confirmed to exist.
+     */
+    @Transactional
+    public CompositeResponse updateTemplate(String value, WorkoutTemplateUpdateRequest request, String userId) {
+        UUID user = owner(userId);
+        java.util.UUID template = id(value);
+        var t = request.template();
+        // Throws when the template is missing or belongs to somebody else, before any write happens.
+        if (jdbc.queryForObject("select count(*) from workout_templates where id=? and user_id=?::uuid",
+                Integer.class, template, user) == 0) {
+            throw new NoSuchElementException("Resource not found");
+        }
+        jdbc.update("UPDATE workout_templates SET name=?,description=?,workout_type=?,estimated_minutes=?,is_favorite=? WHERE id=?",
+                t.name(), t.description(), t.workoutType(), t.estimatedMinutes(), t.favorite(), template);
+        jdbc.update("DELETE FROM workout_template_exercises WHERE template_id=?", template);
+        for (TemplateExerciseData e : request.exercises()) {
+            requireCatalog("exercises", e.exerciseId());
+            jdbc.update("INSERT INTO workout_template_exercises(id,template_id,exercise_id,order_index,target_sets,target_reps,target_weight) VALUES (?,?,?,?,?,?,?)",
+                    UUID.randomUUID(), template, e.exerciseId(), e.orderIndex(), e.targetSets(), e.targetReps(), e.targetWeight());
+        }
+        return new CompositeResponse(template, "workout_template", request.exercises().size());
+    }
+
+    /** Parses a path id, reporting a malformed value as a client error rather than a server fault. */
+    private java.util.UUID id(String value) {
+        try { return java.util.UUID.fromString(value); }
+        catch (RuntimeException e) { throw new IllegalArgumentException("Invalid template id"); }
     }
 
     @Transactional

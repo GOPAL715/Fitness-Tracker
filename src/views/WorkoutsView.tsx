@@ -32,6 +32,7 @@ export default function WorkoutsView({ workouts, plan, sessions, templates, exer
   const [loggerPreset, setLoggerPreset] = useState<{ title: string; type: string } | null>(null);
   const [quickLogOpen, setQuickLogOpen] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const [quickForm, setQuickForm] = useState({
@@ -65,12 +66,37 @@ export default function WorkoutsView({ workouts, plan, sessions, templates, exer
     setLoggerOpen(true);
   }
 
-  async function togglePlan(session: PlanSession) {
-    await apiData.from("plan_sessions").update({ completed: !session.completed }).eq("id", session.id);
-    onRefresh();
+  /**
+   * Runs a single-row mutation, reporting a failure instead of silently refreshing.
+   *
+   * <p>The adapter reports problems through error rather than throwing, so it has to be read
+   * explicitly; the previous fire-and-forget calls refreshed unconditionally and a failed delete
+   * looked like a no-op. The row is marked busy while in flight so a row cannot stay disabled.
+   */
+  async function runRowMutation(id: string, failure: string, action: () => PromiseLike<{ error: unknown }>) {
+    setBusyId(id);
+    setError(null);
+    try {
+      const { error: mutationError } = await action();
+      if (mutationError) {
+        setError(failure);
+        return;
+      }
+      onRefresh();
+    } catch {
+      setError(failure);
+    } finally {
+      setBusyId(null);
+    }
   }
 
-  async function startPlanSession(session: PlanSession) {
+  function togglePlan(session: PlanSession) {
+    return runRowMutation(session.id, "That plan session could not be updated. Please try again.", () =>
+      apiData.from("plan_sessions").update({ completed: !session.completed }).eq("id", session.id)
+    );
+  }
+
+  function startPlanSession(session: PlanSession) {
     openStructuredLogger({ title: session.title, type: session.workout_type });
   }
 
@@ -103,19 +129,22 @@ export default function WorkoutsView({ workouts, plan, sessions, templates, exer
     onRefresh();
   }
 
-  async function toggleWorkout(w: Workout) {
-    await apiData.from("workouts").update({ completed: !w.completed }).eq("id", w.id);
-    onRefresh();
+  function toggleWorkout(w: Workout) {
+    return runRowMutation(w.id, "That workout could not be updated. Please try again.", () =>
+      apiData.from("workouts").update({ completed: !w.completed }).eq("id", w.id)
+    );
   }
 
-  async function deleteWorkout(id: string) {
-    await apiData.from("workouts").delete().eq("id", id);
-    onRefresh();
+  function deleteWorkout(id: string) {
+    return runRowMutation(id, "That workout could not be deleted. Please try again.", () =>
+      apiData.from("workouts").delete().eq("id", id)
+    );
   }
 
-  async function deleteSession(id: string) {
-    await apiData.from("workout_sessions").delete().eq("id", id);
-    onRefresh();
+  function deleteSession(id: string) {
+    return runRowMutation(id, "That session could not be deleted. Please try again.", () =>
+      apiData.from("workout_sessions").delete().eq("id", id)
+    );
   }
 
   return (
@@ -131,6 +160,13 @@ export default function WorkoutsView({ workouts, plan, sessions, templates, exer
           </button>
         </div>
       </div>
+
+      {/* Row mutations report here, so a failed toggle or delete is never silent. */}
+      {error && !quickLogOpen && (
+        <div className="form-error" role="alert" style={{ marginBottom: 12 }}>
+          <span>{error}</span>
+        </div>
+      )}
 
       <div className="grid-4">
         <div className="card">
@@ -226,7 +262,7 @@ export default function WorkoutsView({ workouts, plan, sessions, templates, exer
                   </div>
                   <div style={{ display: "flex", gap: 8 }}>
                     {s.completed && (
-                      <button className="btn btn-secondary btn-sm" onClick={() => togglePlan(s)}>
+                      <button className="btn btn-secondary btn-sm" onClick={() => togglePlan(s)} disabled={busyId === s.id}>
                         <Check size={14} /> Done
                       </button>
                     )}
@@ -271,7 +307,7 @@ export default function WorkoutsView({ workouts, plan, sessions, templates, exer
                         <span>RPE {s.perceived_effort}/10</span>
                       </div>
                     </div>
-                    <button className="btn btn-secondary btn-sm" onClick={() => deleteSession(s.id)} aria-label="Delete session">
+                    <button className="btn btn-secondary btn-sm" onClick={() => deleteSession(s.id)} disabled={busyId === s.id} aria-label="Delete session">
                       <Trash2 size={14} color="#f87171" />
                     </button>
                   </div>
@@ -376,10 +412,10 @@ export default function WorkoutsView({ workouts, plan, sessions, templates, exer
                   )}
                 </div>
                 <div style={{ display: "flex", gap: 8 }}>
-                  <button className="btn btn-secondary btn-sm" onClick={() => toggleWorkout(w)} aria-label="Toggle completion">
+                  <button className="btn btn-secondary btn-sm" onClick={() => toggleWorkout(w)} disabled={busyId === w.id} aria-label="Toggle completion">
                     {w.completed ? <Check size={14} /> : <Play size={14} />}
                   </button>
-                  <button className="btn btn-secondary btn-sm" onClick={() => deleteWorkout(w.id)} aria-label="Delete workout">
+                  <button className="btn btn-secondary btn-sm" onClick={() => deleteWorkout(w.id)} disabled={busyId === w.id} aria-label="Delete workout">
                     <Trash2 size={14} color="#f87171" />
                   </button>
                 </div>

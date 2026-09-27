@@ -5,7 +5,7 @@
  * request - same path, method, payload and idempotency key - is queued in IndexedDB and replayed
  * when connectivity returns. Nothing credential-related is ever placed in the queue.
  */
-import { API_BASE_URL, apiClient, json } from "../api/apiClient";
+import { API_BASE_URL, apiClient, getAccessToken, json } from "../api/apiClient";
 import { enqueue, newOpId, type QueuedOperation } from "./mutationQueue";
 import { drainQueue } from "./syncEngine";
 
@@ -45,11 +45,17 @@ export async function submitWorkoutSession(payload: unknown): Promise<SubmitResu
  */
 export async function syncWorkoutSessions(): Promise<{ synced: number; failed: number; conflicts: number }> {
   const summary = await drainQueue(async (op: QueuedOperation) => {
+    // The token is read at replay time from the canonical in-memory client, so nothing credential-
+    // shaped is ever written to IndexedDB. Without one the request cannot be attributed to a user,
+    // so it is reported as 401 rather than being retried against an endpoint that will reject it.
+    const token = getAccessToken();
+    if (!token) return 401;
     try {
       const response = await fetch(`${API_BASE_URL}${op.resource}`, {
         method: op.method,
         headers: {
           "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
           "Idempotency-Key": op.idempotencyKey ?? op.opId,
         },
         body: JSON.stringify(op.payload),

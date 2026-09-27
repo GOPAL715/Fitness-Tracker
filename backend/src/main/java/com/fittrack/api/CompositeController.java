@@ -39,6 +39,20 @@ public class CompositeController {
         return replay(key, user, "workout_template", () -> service.completeTemplate(request, user));
     }
 
+    /**
+     * Replaces an existing template and its exercises atomically.
+     *
+     * <p>Separate from the create endpoint so a template is edited in place, with the same all-or-
+     * nothing guarantee. No idempotency key: the row is addressed by id, so a repeat is an ordinary
+     * update rather than a second template.
+     */
+    @PutMapping("/workout-templates/{id}/complete")
+    public CompositeResponse updateTemplate(@PathVariable String id,
+                                            @Valid @RequestBody WorkoutTemplateUpdateRequest request,
+                                            @AuthenticationPrincipal String user) {
+        return service.updateTemplate(id, request, user);
+    }
+
     @PostMapping("/meals/complete")
     public CompositeResponse completeMeal(@Valid @RequestBody MealCompleteRequest request,
                                           @RequestHeader(value = "Idempotency-Key", required = false) String key,
