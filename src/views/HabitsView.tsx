@@ -39,6 +39,7 @@ export default function HabitsView({ habits, logs, reminders, onRefresh }: Props
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<Habit | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
   const [form, setForm] = useState({ name: "", icon: "check", color: "#38bdf8", target_per_week: 7 });
   const [reminderForm, setReminderForm] = useState({
     type: "WORKOUT",
@@ -62,14 +63,50 @@ export default function HabitsView({ habits, logs, reminders, onRefresh }: Props
     return logs.some((l) => l.habit_id === habitId && l.log_date === date && l.completed);
   }
 
+  /**
+   * Runs a single habit or reminder mutation, reporting a failure instead of refreshing anyway.
+   *
+   * <p>The adapter reports problems through `error` rather than throwing, so it has to be read
+   * explicitly; the previous fire-and-forget calls refreshed unconditionally, so a rejected
+   * check-in looked like it had been saved. The row is marked busy while in flight so a slow
+   * request cannot be started twice, and on success the caller decides what else to reset.
+   *
+   * @returns true when the mutation succeeded.
+   */
+  async function runMutation(id: string, failure: string, action: () => PromiseLike<{ error: unknown }>) {
+    setBusyId(id);
+    setError(null);
+    try {
+      const { error: mutationError } = await action();
+      if (mutationError) {
+        setError(failure);
+        return false;
+      }
+      onRefresh();
+      return true;
+    } catch {
+      setError(failure);
+      return false;
+    } finally {
+      // finally, so a thrown request can never leave a row stuck on its busy state.
+      setBusyId(null);
+    }
+  }
+
   async function toggle(habit: Habit, date: string) {
     const existing = logs.find((l) => l.habit_id === habit.id && l.log_date === date);
+    // Un-checking an existing day deletes the row; checking a day inserts one. The toggle
+    // reads the current logs, so a stale list produces a duplicate request rather than a wrong
+    // state, and the server-side unique constraint is what actually prevents a second row.
     if (existing) {
-      await apiData.from("habit_logs").delete().eq("id", existing.id);
-    } else {
-      await apiData.from("habit_logs").insert({ habit_id: habit.id, log_date: date, completed: true });
+      await runMutation(habit.id, "That check-in could not be removed. Please try again.", () =>
+        apiData.from("habit_logs").delete().eq("id", existing.id),
+      );
+      return;
     }
-    onRefresh();
+    await runMutation(habit.id, "That check-in could not be saved. Please try again.", () =>
+      apiData.from("habit_logs").insert({ habit_id: habit.id, log_date: date, completed: true }),
+    );
   }
 
   async function createHabit() {
@@ -79,20 +116,27 @@ export default function HabitsView({ habits, logs, reminders, onRefresh }: Props
     }
     setSaving(true);
     setError(null);
-    const { error: insertError } = await apiData.from("habits").insert({
-      name: form.name.trim(),
-      icon: form.icon,
-      color: form.color,
-      target_per_week: Number(form.target_per_week) || 7,
-    });
-    setSaving(false);
-    if (insertError) {
+    try {
+      const { error: insertError } = await apiData.from("habits").insert({
+        name: form.name.trim(),
+        icon: form.icon,
+        color: form.color,
+        target_per_week: Number(form.target_per_week) || 7,
+      });
+
+      if (insertError) {
+        setError("That habit could not be saved. Please try again.");
+        return;
+      }
+      setForm({ name: "", icon: "check", color: "#38bdf8", target_per_week: 7 });
+      setOpenNew(false);
+      onRefresh();
+    } catch {
       setError("That habit could not be saved. Please try again.");
-      return;
+    } finally {
+      // finally, so a thrown request can never leave the button stuck on "Saving".
+      setSaving(false);
     }
-    setForm({ name: "", icon: "check", color: "#38bdf8", target_per_week: 7 });
-    setOpenNew(false);
-    onRefresh();
   }
 
   async function createReminder() {
@@ -106,40 +150,52 @@ export default function HabitsView({ habits, logs, reminders, onRefresh }: Props
     }
     setSaving(true);
     setError(null);
-    const { error: insertError } = await apiData.from("reminders").insert({
-      type: reminderForm.type,
-      title: reminderForm.title.trim(),
-      message: reminderForm.message.trim(),
-      scheduled_time: reminderForm.scheduled_time,
-      days_of_week: reminderForm.days,
-      quiet_hours_start: reminderForm.quiet_hours_start,
-      quiet_hours_end: reminderForm.quiet_hours_end,
-      enabled: true,
-    });
-    setSaving(false);
-    if (insertError) {
+    try {
+      const { error: insertError } = await apiData.from("reminders").insert({
+        type: reminderForm.type,
+        title: reminderForm.title.trim(),
+        message: reminderForm.message.trim(),
+        scheduled_time: reminderForm.scheduled_time,
+        days_of_week: reminderForm.days,
+        quiet_hours_start: reminderForm.quiet_hours_start,
+        quiet_hours_end: reminderForm.quiet_hours_end,
+        enabled: true,
+      });
+
+      if (insertError) {
+        setError("That reminder could not be saved. Please try again.");
+        return;
+      }
+      setReminderForm({ ...reminderForm, title: "", message: "" });
+      setOpenReminder(false);
+      onRefresh();
+    } catch {
       setError("That reminder could not be saved. Please try again.");
-      return;
+    } finally {
+      // finally, so a thrown request can never leave the button stuck on "Saving".
+      setSaving(false);
     }
-    setReminderForm({ ...reminderForm, title: "", message: "" });
-    setOpenReminder(false);
-    onRefresh();
   }
 
   async function toggleReminder(r: Reminder) {
-    await apiData.from("reminders").update({ enabled: !r.enabled }).eq("id", r.id);
-    onRefresh();
+    await runMutation(r.id, "That reminder could not be updated. Please try again.", () =>
+      apiData.from("reminders").update({ enabled: !r.enabled }).eq("id", r.id),
+    );
   }
 
   async function deleteReminder(id: string) {
-    await apiData.from("reminders").delete().eq("id", id);
-    onRefresh();
+    await runMutation(id, "That reminder could not be removed. Please try again.", () =>
+      apiData.from("reminders").delete().eq("id", id),
+    );
   }
 
   async function deleteHabit(h: Habit) {
-    await apiData.from("habits").delete().eq("id", h.id);
-    setConfirmDelete(null);
-    onRefresh();
+    // The dialog is only closed once the delete is known to have succeeded, so a failure leaves
+    // the confirmation on screen with the error beside it rather than quietly discarding it.
+    const removed = await runMutation(h.id, "That habit could not be removed. Please try again.", () =>
+      apiData.from("habits").delete().eq("id", h.id),
+    );
+    if (removed) setConfirmDelete(null);
   }
 
   return (
@@ -190,7 +246,7 @@ export default function HabitsView({ habits, logs, reminders, onRefresh }: Props
                   <div style={{ fontSize: 26, fontWeight: 800, color: "#f0f6fc" }}>
                     {Math.max(0, ...habits.map((h) => habitStreak(h.id, logs)))}
                   </div>
-                  <span className="stat-meta">longest active streak</span>
+                  <span className="stat-meta">current streak</span>
                 </div>
                 <div>
                   <div style={{ fontSize: 26, fontWeight: 800, color: "#f0f6fc" }}>{habits.length}</div>
@@ -240,6 +296,7 @@ export default function HabitsView({ habits, logs, reminders, onRefresh }: Props
                           className={`habit-day ${done ? "habit-day-done" : ""} ${isToday ? "habit-day-today" : ""}`}
                           style={done ? { background: `${h.color}2e`, borderColor: h.color } : undefined}
                           onClick={() => toggle(h, d)}
+                          disabled={busyId === h.id}
                           aria-label={`${h.name} on ${d}`}
                           aria-pressed={done}
                         >
@@ -294,10 +351,10 @@ export default function HabitsView({ habits, logs, reminders, onRefresh }: Props
                   </div>
                 </div>
                 <div style={{ display: "flex", gap: 8 }}>
-                  <button className="btn btn-secondary btn-sm" onClick={() => toggleReminder(r)}>
+                  <button className="btn btn-secondary btn-sm" onClick={() => toggleReminder(r)} disabled={busyId === r.id}>
                     {r.enabled ? "Disable" : "Enable"}
                   </button>
-                  <button className="btn btn-secondary btn-sm" onClick={() => deleteReminder(r.id)} aria-label="Delete reminder">
+                  <button className="btn btn-secondary btn-sm" onClick={() => deleteReminder(r.id)} disabled={busyId === r.id} aria-label="Delete reminder">
                     <Trash2 size={14} color="#f87171" />
                   </button>
                 </div>
@@ -306,6 +363,13 @@ export default function HabitsView({ habits, logs, reminders, onRefresh }: Props
           </div>
         )}
       </div>
+      {/* Row mutations report here, so a failed check-in or delete is never silent. */}
+      {error && !openNew && !openReminder && !confirmDelete && (
+        <div className="form-error" role="alert" style={{ marginBottom: 12 }}>
+          <span>{error}</span>
+        </div>
+      )}
+
 
       {openNew && (
         <Modal title="New habit" onClose={() => setOpenNew(false)}>
@@ -423,11 +487,14 @@ export default function HabitsView({ habits, logs, reminders, onRefresh }: Props
       {confirmDelete && (
         <Modal title="Delete habit?" onClose={() => setConfirmDelete(null)}>
           <p style={{ fontSize: 14, color: "#cbd5e1", lineHeight: 1.6, marginTop: 0 }}>
-            “{confirmDelete.name}” and its check-in history will be removed.
+            &ldquo;{confirmDelete.name}&rdquo; and its check-in history will be removed.
           </p>
+          {error && <div className="form-error" style={{ marginBottom: 12 }}>{error}</div>}
           <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 20 }}>
             <button className="btn btn-secondary" onClick={() => setConfirmDelete(null)}>Keep it</button>
-            <button className="btn btn-danger" onClick={() => deleteHabit(confirmDelete)}>Delete habit</button>
+            <button className="btn btn-danger" onClick={() => deleteHabit(confirmDelete)} disabled={busyId === confirmDelete.id}>
+              {busyId === confirmDelete.id ? "Deleting..." : "Delete habit"}
+            </button>
           </div>
         </Modal>
       )}

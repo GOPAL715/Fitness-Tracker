@@ -1,13 +1,30 @@
 export const DAY_LABELS_MON = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
 
+/**
+ * Formats a Date as the calendar date it falls on in the viewer own timezone.
+ *
+ * <p>toISOString() cannot be used here: it converts to UTC first, so for anyone east of
+ * UTC the reported day is yesterday for the first hours of the morning, and for anyone west
+ * it can be tomorrow. A habit check-in is a statement about a day in the user own calendar,
+ * so the local calendar date is the only correct basis for it.
+ */
+function localDateISO(d: Date): string {
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${month}-${day}`;
+}
+
 export function todayISO(): string {
-  return new Date().toISOString().split("T")[0];
+  return localDateISO(new Date());
 }
 
 export function dateOffset(days: number): string {
   const d = new Date();
   d.setDate(d.getDate() - days);
-  return d.toISOString().split("T")[0];
+  // The offset is walked in local time and then formatted locally, so it shares the basis that
+  // todayISO uses: a streak counted across these dates cannot disagree with the date a check-in
+  // was written against.
+  return localDateISO(d);
 }
 
 export function dayIndex(dateISO: string): number {

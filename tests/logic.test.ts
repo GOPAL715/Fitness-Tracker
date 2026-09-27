@@ -1,9 +1,9 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import { calculateNutrition, sumNutrition, matchFood, isValidImageFile } from "../src/lib/nutrition";
 import { parseDetections, confidenceLabel, needsReview } from "../src/lib/foodScan";
 import {
   computeSessionMetrics, estimateOneRepMax, bestOneRepMax, muscleDistribution,
-  underTrainedMuscles, habitStreak, weeklyVolumeSeries, type SessionWithDetail,
+  underTrainedMuscles, habitStreak, habitWeeklyRate, weeklyVolumeSeries, type SessionWithDetail,
 } from "../src/lib/workoutMetrics";
 import { computeReadiness, computeTrainingLoad, computeStreak, macroTotals, computeConsistency } from "../src/lib/insights";
 import { computeGoalProgress } from "../src/views/GoalsView";
@@ -511,6 +511,57 @@ describe("habitStreak", () => {
   it("stops at the first gap", () => {
     expect(habitStreak(habit.id, [log(todayISO()), log(dateOffset(2))])).toBe(1);
   });
+
+  it("counts a single day as one", () => {
+    expect(habitStreak(habit.id, [log(todayISO())])).toBe(1);
+  });
+
+  it("keeps counting a run that ended yesterday, because today is still open", () => {
+    // The day is not over, so an unlogged today must not discard a run that is still alive.
+    expect(habitStreak(habit.id, [log(dateOffset(1)), log(dateOffset(2)), log(dateOffset(3))])).toBe(3);
+    expect(habitStreak(habit.id, [
+      log(dateOffset(1)), log(dateOffset(2)), log(dateOffset(3)), log(dateOffset(4)), log(dateOffset(5)),
+    ])).toBe(5);
+  });
+
+  it("ignores a future completion rather than counting it", () => {
+    const future: HabitLog = { id: "f", user_id: "u", habit_id: "h", log_date: "2999-01-01", completed: true };
+    expect(habitStreak(habit.id, [future])).toBe(0);
+  });
+
+  it("does not count an incomplete log", () => {
+    const missed: HabitLog = { ...log(todayISO()), id: "m", completed: false };
+    expect(habitStreak(habit.id, [missed])).toBe(0);
+  });
+});
+
+describe("habitWeeklyRate", () => {
+  const habit: Habit = {
+    id: "h", user_id: "u", name: "Water", description: "", icon: "droplet",
+    target_per_week: 7, color: "#38bdf8", active: true,
+  };
+  const log = (date: string): HabitLog =>
+    ({ id: `l-${date}`, user_id: "u", habit_id: "h", log_date: date, completed: true });
+
+  it("is zero with no check-ins and full at the target", () => {
+    expect(habitWeeklyRate(habit, [])).toBe(0);
+    expect(habitWeeklyRate(habit, Array.from({ length: 7 }, (_, i) => log(dateOffset(i))))).toBe(100);
+  });
+
+  it("scales with the days completed in the last seven", () => {
+    expect(habitWeeklyRate(habit, [log(todayISO())])).toBe(14);
+    expect(habitWeeklyRate(habit, [log(todayISO()), log(dateOffset(1))])).toBe(29);
+  });
+
+  it("ignores days older than the window and never exceeds 100", () => {
+    expect(habitWeeklyRate(habit, [log(dateOffset(7)), log(dateOffset(9))])).toBe(0);
+    const over = Array.from({ length: 12 }, (_, i) => log(dateOffset(i)));
+    expect(habitWeeklyRate(habit, over)).toBe(100);
+  });
+
+  it("counts distinct days, so one habit cannot exceed its own target", () => {
+    expect(habitWeeklyRate(habit, [log(todayISO()), log(todayISO())])).toBe(14);
+  });
 });
 
 /* ---------- Utilities ---------- */
@@ -528,6 +579,81 @@ describe("utility edge cases", () => {
   it("offsets dates backwards", () => {
     expect(dateOffset(0)).toBe(todayISO());
     expect(dateOffset(1) < todayISO()).toBe(true);
+  });
+});
+
+/* ---------- Local calendar dates (M3) ---------- */
+
+describe("local calendar dates", () => {
+  // The suite runs in the machine timezone, which is +05:30 during this phase, so a local day
+  // and a UTC day genuinely disagree for part of it. These assert the local one is used.
+  const realNow = Date.now;
+
+  function atLocalTime(hour: number, minute: number) {
+    const d = new Date();
+    d.setHours(hour, minute, 0, 0);
+    return d;
+  }
+
+  afterEach(() => {
+    vi.useRealTimers();
+    Date.now = realNow;
+  });
+
+  it("reports the local day, not the UTC day, just after local midnight", () => {
+    // 00:30 in Asia/Kolkata is 19:00 the previous day in UTC. toISOString() would answer
+    // with yesterday's date, which is the bug this guards.
+    const local = atLocalTime(0, 30);
+    vi.useFakeTimers();
+    vi.setSystemTime(local);
+    Date.now = () => local.getTime();
+
+    const expected = `${local.getFullYear()}-${String(local.getMonth() + 1).padStart(2, "0")}-${String(local.getDate()).padStart(2, "0")}`;
+    expect(todayISO()).toBe(expected);
+    // Only meaningful where the offset actually pushes the UTC date across the boundary.
+    if (local.getTimezoneOffset() > 0) expect(todayISO()).not.toBe(local.toISOString().split("T")[0]);
+  });
+
+  it("agrees with the local day in the middle of the afternoon", () => {
+    const local = atLocalTime(15, 0);
+    vi.useFakeTimers();
+    vi.setSystemTime(local);
+    Date.now = () => local.getTime();
+    expect(todayISO()).toBe(`${local.getFullYear()}-${String(local.getMonth() + 1).padStart(2, "0")}-${String(local.getDate()).padStart(2, "0")}`);
+  });
+
+  it("walks dateOffset on the same basis as todayISO, forwards and backwards", () => {
+    const local = atLocalTime(2, 0);
+    vi.useFakeTimers();
+    vi.setSystemTime(local);
+    Date.now = () => local.getTime();
+
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const day = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    const yest = new Date(local);
+    yest.setDate(yest.getDate() - 1);
+
+    expect(dateOffset(0)).toBe(todayISO());
+    expect(dateOffset(1)).toBe(day(yest));
+    expect(dateOffset(2) < dateOffset(1)).toBe(true);
+    // No mixing: every offset lands on a real local calendar day, never a UTC-shifted one.
+    for (let i = 0; i <= 5; i++) expect(dateOffset(i)).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  it("keeps a streak on the same dates the check-ins were written against", () => {
+    // A check-in written at 00:30 local is dated with the local day, and the streak has to
+    // read that same day back rather than the UTC one, or it silently skips a day.
+    const local = atLocalTime(0, 30);
+    vi.useFakeTimers();
+    vi.setSystemTime(local);
+    Date.now = () => local.getTime();
+
+    const yesterday = dateOffset(1);
+    const logs: HabitLog[] = [
+      { id: "t", user_id: "u", habit_id: "h", log_date: todayISO(), completed: true },
+      { id: "y", user_id: "u", habit_id: "h", log_date: yesterday, completed: true },
+    ];
+    expect(habitStreak("h", logs)).toBe(2);
   });
 });
 
