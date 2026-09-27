@@ -28,24 +28,30 @@ export default function OnboardingScreen({ profile, onComplete }: Props) {
     setSaving(true);
     setError(null);
 
-    const { error: updateError } = await apiData
-      .from("fitness_profile")
-      .update({
-        display_name: form.display_name.trim(),
-        goal: form.goal,
-        fitness_level: form.fitness_level,
-        equipment: form.equipment,
-        activity_target: Number(form.activity_target),
-        weekly_minutes: Number(form.weekly_minutes),
-      })
-      .eq("id", profile.id);
-
-    setSaving(false);
-    if (updateError) {
+    try {
+      const { error: updateError } = await apiData
+        .from("fitness_profile")
+        .update({
+          display_name: form.display_name.trim(),
+          goal: form.goal,
+          fitness_level: form.fitness_level,
+          equipment: form.equipment,
+          activity_target: Number(form.activity_target),
+          weekly_minutes: Number(form.weekly_minutes),
+        })
+        .eq("id", profile.id);
+  
+      if (updateError) {
+        setError("We could not save your details. Please try again.");
+        return;
+      }
+      onComplete();
+    } catch {
       setError("We could not save your details. Please try again.");
-      return;
+    } finally {
+      // finally guarantees the button re-enables, even on an unexpected throw.
+      setSaving(false);
     }
-    onComplete();
   }
 
   return (

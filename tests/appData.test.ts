@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { hydrateSessions, hydrateTemplates, needsOnboarding, EMPTY_APP_DATA } from "../src/features/appData/appData";
 import { TABS, DEFAULT_TAB } from "../src/features/navigation/tabs";
 import type { Exercise, ExerciseSet, WorkoutExercise, WorkoutSession, WorkoutTemplate, TemplateExercise } from "../src/lib/types";
-import type { Profile } from "../src/lib/supabase";
+import type { Profile } from "../src/lib/domain";
 
 /* ---------- Fixtures ---------- */
 
@@ -138,7 +138,7 @@ describe("hydrateTemplates", () => {
 describe("needsOnboarding", () => {
   function profile(name: string): Profile {
     return {
-      id: "p", user_id: "u", display_name: name, goal: "Build strength",
+      id: "p", display_name: name, goal: "Build strength",
       activity_target: 4, weekly_minutes: 180, fitness_level: "Intermediate",
       equipment: "Full gym", limitations: "None", sleep_target_hours: 8,
       step_target: 10000, calorie_target: 2400, protein_target_g: 150,

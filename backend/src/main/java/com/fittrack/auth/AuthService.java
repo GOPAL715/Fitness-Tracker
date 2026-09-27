@@ -1,9 +1,45 @@
 package com.fittrack.auth;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service; import org.springframework.transaction.annotation.Transactional; import org.springframework.security.crypto.password.PasswordEncoder; import java.security.*; import java.nio.charset.StandardCharsets; import java.time.*; import java.util.*; import org.springframework.beans.factory.annotation.Value;
 @Service public class AuthService {
- UserRepository users; RefreshTokenRepository tokens; PasswordEncoder encoder; JwtService jwt; Duration ttl;
+ UserRepository users; RefreshTokenRepository tokens; PasswordEncoder encoder; JwtService jwt; Duration ttl; JdbcTemplate jdbc;
  public AuthService(UserRepository u,RefreshTokenRepository t,PasswordEncoder p,JwtService j,@Value("${app.refresh-ttl}") Duration d){users=u;tokens=t;encoder=p;jwt=j;ttl=d;}
- @Transactional public Tokens register(Credentials c){validate(c);String email=c.email().toLowerCase();if(users.existsByEmail(email))throw new IllegalArgumentException("Email already registered");User u=new User();u.setEmail(email);u.setPasswordHash(encoder.encode(c.password()));users.save(u);return issue(u);}
+ /** Set by the container. Field injection keeps the existing constructor signature intact. */
+ @Autowired void setJdbc(JdbcTemplate jdbc){this.jdbc=jdbc;}
+
+ /**
+  * Creates the account and its starter fitness profile in one transaction.
+  *
+  * <p>Every account needs a profile row: the app reads it through {@code /app-data} and the whole
+  * Profile screen is a no-op without one, so an account without a profile is an unusable account. The
+  * values are the same defaults the Profile form itself falls back to, which is also what the
+  * onboarding gate keys on, so a new account correctly lands on the onboarding screen.
+  *
+  * <p>Transactional on purpose: if the profile insert fails, the user insert rolls back with it, so a
+  * half-created account is never persisted. {@code user_id} is taken from the freshly created entity
+  * and is never read from the request.
+  */
+ @Transactional public Tokens register(Credentials c){
+  validate(c);String email=c.email().toLowerCase();
+  if(users.existsByEmail(email))throw new IllegalArgumentException("Email already registered");
+  User u=new User();u.setEmail(email);u.setPasswordHash(encoder.encode(c.password()));users.save(u);
+  users.flush();
+  createStarterProfile(u.getId());
+  return issue(u);
+ }
+
+ /**
+  * Inserts the default profile for a new account.
+  *
+  * <p>Idempotent against a re-run: the unique constraint on {@code user_id} is the real guarantee, and
+  * an existing row is left untouched rather than reset, so this can never wipe onboarding progress.
+  */
+ private void createStarterProfile(java.util.UUID userId){
+  jdbc.update("insert into fitness_profile (user_id,display_name,goal,fitness_level,equipment,limitations,activity_target,weekly_minutes,sleep_target_hours,step_target,calorie_target,protein_target_g,water_target_oz,target_weight_lb) "
+   +"select ?,?,?,?,?,?,?,?,?,?,?,?,?,? where not exists (select 1 from fitness_profile where user_id=?)",
+   userId,"Alex Morgan","Build strength","Intermediate","Full gym","None",4,180,new java.math.BigDecimal("8"),10000,2400,150,100,new java.math.BigDecimal("175"),userId);
+ }
  /**
   * Authenticates and issues a new session.
   *

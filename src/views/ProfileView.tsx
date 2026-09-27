@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Target,
   Watch,
@@ -45,17 +45,31 @@ const kindIcon = {
   info: <Info size={16} color="#94a3b8" />,
 };
 
-export default function ProfileView({ profile, devices, notifications, onRefresh }: Props) {
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
-  const [syncing, setSyncing] = useState<string | null>(null);
-  const { session } = useAuth();
-  const [coachBusy, setCoachBusy] = useState(false);
-  const [coachError, setCoachError] = useState<string | null>(null);
-  const [coachReview, setCoachReview] = useState<WeeklyReview | null>(null);
+/** Every editable profile field, as the form holds it. */
+type ProfileForm = {
+  display_name: string;
+  goal: string;
+  fitness_level: string;
+  equipment: string;
+  limitations: string;
+  activity_target: number;
+  weekly_minutes: number;
+  sleep_target_hours: number;
+  step_target: number;
+  calorie_target: number;
+  protein_target_g: number;
+  water_target_oz: number;
+  target_weight_lb: number;
+};
 
-  const [form, setForm] = useState({
+/**
+ * The server row, falling back to the application defaults.
+ *
+ * <p>Exported so the component and its tests agree on one definition of "no value yet" rather than
+ * scattering default literals through the view.
+ */
+export function profileToForm(profile: Profile | null): ProfileForm {
+  return {
     display_name: profile?.display_name ?? "",
     goal: profile?.goal ?? "Build strength",
     fitness_level: profile?.fitness_level ?? "Intermediate",
@@ -69,58 +83,136 @@ export default function ProfileView({ profile, devices, notifications, onRefresh
     protein_target_g: profile?.protein_target_g ?? 150,
     water_target_oz: profile?.water_target_oz ?? 100,
     target_weight_lb: profile?.target_weight_lb ?? 175,
-  });
+  };
+}
+
+/** The numeric fields the form owns, always sent as numbers rather than raw input strings. */
+const NUMERIC_FIELDS = [
+  "activity_target",
+  "weekly_minutes",
+  "sleep_target_hours",
+  "step_target",
+  "calorie_target",
+  "protein_target_g",
+  "water_target_oz",
+  "target_weight_lb",
+] as const;
+
+/** The exact PUT body, matching the backend's writable column set. */
+export function formToPayload(form: ProfileForm): Record<string, string | number> {
+  const payload: Record<string, string | number> = { ...form };
+  for (const field of NUMERIC_FIELDS) payload[field] = Number(form[field]);
+  return payload;
+}
+
+
+export default function ProfileView({ profile, devices, notifications, onRefresh }: Props) {
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState<string | null>(null);
+  const { session } = useAuth();
+  const [coachBusy, setCoachBusy] = useState(false);
+  const [coachError, setCoachError] = useState<string | null>(null);
+  const [coachReview, setCoachReview] = useState<WeeklyReview | null>(null);
+
+  const [form, setForm] = useState<ProfileForm>(() => profileToForm(profile));
+  /** True once the user edits a field, so a background refresh cannot discard their typing. */
+  const dirty = useRef(false);
+  /** The profile the form was last seeded from, so an unrelated parent render is not a refresh. */
+  const seededFrom = useRef(profile);
+
+  // Re-seed only when a genuinely different profile arrives. While the user has unsaved edits the
+  // form is left alone; a save clears the flag first, so the post-save refresh does take effect.
+  useEffect(() => {
+    if (dirty.current || seededFrom.current === profile) return;
+    seededFrom.current = profile;
+    setForm(profileToForm(profile));
+  }, [profile]);
+
+  /** Applies one field edit and marks the form dirty. */
+  const edit = useCallback(<K extends keyof ProfileForm>(key: K, value: ProfileForm[K]) => {
+    dirty.current = true;
+    setSaved(false);
+    setSaveError(null);
+    setForm((current) => ({ ...current, [key]: value }));
+  }, []);
 
   async function saveProfile() {
-    if (!profile) return;
+    if (!profile) {
+      setSaveError("Your profile is still loading. Please try again in a moment.");
+      return;
+    }
     setSaving(true);
     setSaveError(null);
     setSaved(false);
-    const { error } = await apiData
-      .from("fitness_profile")
-      .update({
-        ...form,
-        activity_target: Number(form.activity_target),
-        weekly_minutes: Number(form.weekly_minutes),
-        sleep_target_hours: Number(form.sleep_target_hours),
-        step_target: Number(form.step_target),
-        calorie_target: Number(form.calorie_target),
-        protein_target_g: Number(form.protein_target_g),
-        water_target_oz: Number(form.water_target_oz),
-        target_weight_lb: Number(form.target_weight_lb),
-      })
-      .eq("id", profile.id);
-    setSaving(false);
-    if (error) {
+    try {
+      // The adapter reports failure through `error`; the catch is the safety net for anything else,
+      // so the button can never be left stuck on "Saving…" either way.
+      const { error } = await apiData.from("fitness_profile").update(formToPayload(form)).eq("id", profile.id);
+      if (error) {
+        setSaveError("Your changes could not be saved. Please try again.");
+        return;
+      }
+      dirty.current = false;
+      setSaved(true);
+      onRefresh();
+      setTimeout(() => setSaved(false), 2500);
+    } catch {
       setSaveError("Your changes could not be saved. Please try again.");
-      return;
+    } finally {
+      setSaving(false);
     }
-    setSaved(true);
-    onRefresh();
-    setTimeout(() => setSaved(false), 2500);
   }
+
+  const [deviceError, setDeviceError] = useState<string | null>(null);
 
   async function toggleDevice(d: HealthDevice) {
     const nextStatus = d.status === "Connected" ? "Disconnected" : "Connected";
     setSyncing(d.id);
-    await apiData
-      .from("health_devices")
-      .update({ status: nextStatus, last_sync: new Date().toISOString() })
-      .eq("id", d.id);
-    setSyncing(null);
-    onRefresh();
+    setDeviceError(null);
+    try {
+      const { error } = await apiData
+        .from("health_devices")
+        .update({ status: nextStatus, last_sync: new Date().toISOString() })
+        .eq("id", d.id);
+      if (error) {
+        setDeviceError("That device could not be updated. Please try again.");
+        return;
+      }
+      onRefresh();
+    } finally {
+      // finally, not a trailing statement: a thrown error must not leave the button disabled.
+      setSyncing(null);
+    }
   }
 
   async function syncDevice(d: HealthDevice) {
     setSyncing(d.id);
-    await apiData.from("health_devices").update({ last_sync: new Date().toISOString() }).eq("id", d.id);
-    setSyncing(null);
-    onRefresh();
+    setDeviceError(null);
+    try {
+      const { error } = await apiData
+        .from("health_devices")
+        .update({ last_sync: new Date().toISOString() })
+        .eq("id", d.id);
+      if (error) {
+        setDeviceError("That device could not be synced. Please try again.");
+        return;
+      }
+      onRefresh();
+    } finally {
+      setSyncing(null);
+    }
   }
 
   async function markRead(n: CoachNotification) {
     if (n.is_read) return;
-    await apiData.from("coach_notifications").update({ is_read: true }).eq("id", n.id);
+    setDeviceError(null);
+    const { error } = await apiData.from("coach_notifications").update({ is_read: true }).eq("id", n.id);
+    if (error) {
+      setDeviceError("That message could not be marked as read. Please try again.");
+      return;
+    }
     onRefresh();
   }
 
@@ -155,12 +247,12 @@ export default function ProfileView({ profile, devices, notifications, onRefresh
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           <div className="form-row">
             <div className="form-group">
-              <label className="form-label">Name</label>
-              <input className="form-input" value={form.display_name} onChange={(e) => setForm({ ...form, display_name: e.target.value })} />
+              <label className="form-label" htmlFor="profile-display_name">Name</label>
+              <input id="profile-display_name" className="form-input" value={form.display_name} onChange={(e) => edit("display_name", e.target.value)} />
             </div>
             <div className="form-group">
-              <label className="form-label">Primary goal</label>
-              <select className="form-select" value={form.goal} onChange={(e) => setForm({ ...form, goal: e.target.value })}>
+              <label className="form-label" htmlFor="profile-goal">Primary goal</label>
+              <select id="profile-goal" className="form-select" value={form.goal} onChange={(e) => edit("goal", e.target.value)}>
                 {GOALS.map((g) => <option key={g} value={g}>{g}</option>)}
               </select>
             </div>
@@ -168,65 +260,65 @@ export default function ProfileView({ profile, devices, notifications, onRefresh
 
           <div className="form-row">
             <div className="form-group">
-              <label className="form-label">Fitness level</label>
-              <select className="form-select" value={form.fitness_level} onChange={(e) => setForm({ ...form, fitness_level: e.target.value })}>
+              <label className="form-label" htmlFor="profile-fitness_level">Fitness level</label>
+              <select id="profile-fitness_level" className="form-select" value={form.fitness_level} onChange={(e) => edit("fitness_level", e.target.value)}>
                 {FITNESS_LEVELS.map((l) => <option key={l} value={l}>{l}</option>)}
               </select>
             </div>
             <div className="form-group">
-              <label className="form-label">Available equipment</label>
-              <select className="form-select" value={form.equipment} onChange={(e) => setForm({ ...form, equipment: e.target.value })}>
+              <label className="form-label" htmlFor="profile-equipment">Available equipment</label>
+              <select id="profile-equipment" className="form-select" value={form.equipment} onChange={(e) => edit("equipment", e.target.value)}>
                 {EQUIPMENT_OPTIONS.map((l) => <option key={l} value={l}>{l}</option>)}
               </select>
             </div>
           </div>
 
           <div className="form-group">
-            <label className="form-label">Injuries or limitations</label>
-            <input className="form-input" placeholder="e.g. Lower back sensitivity" value={form.limitations} onChange={(e) => setForm({ ...form, limitations: e.target.value })} />
+            <label className="form-label" htmlFor="profile-limitations">Injuries or limitations</label>
+            <input id="profile-limitations" className="form-input" placeholder="e.g. Lower back sensitivity" value={form.limitations} onChange={(e) => edit("limitations", e.target.value)} />
           </div>
 
           <div className="form-row">
             <div className="form-group">
-              <label className="form-label">Workouts per week</label>
-              <input className="form-input" type="number" min={1} max={14} value={form.activity_target} onChange={(e) => setForm({ ...form, activity_target: Number(e.target.value) })} />
+              <label className="form-label" htmlFor="profile-activity_target">Workouts per week</label>
+              <input id="profile-activity_target" className="form-input" type="number" min={1} max={14} value={form.activity_target} onChange={(e) => edit("activity_target", Number(e.target.value))} />
             </div>
             <div className="form-group">
-              <label className="form-label">Training minutes per week</label>
-              <input className="form-input" type="number" min={30} value={form.weekly_minutes} onChange={(e) => setForm({ ...form, weekly_minutes: Number(e.target.value) })} />
-            </div>
-          </div>
-
-          <div className="form-row">
-            <div className="form-group">
-              <label className="form-label">Sleep target (hours)</label>
-              <input className="form-input" type="number" step="0.5" value={form.sleep_target_hours} onChange={(e) => setForm({ ...form, sleep_target_hours: Number(e.target.value) })} />
-            </div>
-            <div className="form-group">
-              <label className="form-label">Daily step target</label>
-              <input className="form-input" type="number" step="500" value={form.step_target} onChange={(e) => setForm({ ...form, step_target: Number(e.target.value) })} />
+              <label className="form-label" htmlFor="profile-weekly_minutes">Training minutes per week</label>
+              <input id="profile-weekly_minutes" className="form-input" type="number" min={30} value={form.weekly_minutes} onChange={(e) => edit("weekly_minutes", Number(e.target.value))} />
             </div>
           </div>
 
           <div className="form-row">
             <div className="form-group">
-              <label className="form-label">Daily calorie target</label>
-              <input className="form-input" type="number" step="50" value={form.calorie_target} onChange={(e) => setForm({ ...form, calorie_target: Number(e.target.value) })} />
+              <label className="form-label" htmlFor="profile-sleep_target_hours">Sleep target (hours)</label>
+              <input id="profile-sleep_target_hours" className="form-input" type="number" step="0.5" value={form.sleep_target_hours} onChange={(e) => edit("sleep_target_hours", Number(e.target.value))} />
             </div>
             <div className="form-group">
-              <label className="form-label">Daily protein target (g)</label>
-              <input className="form-input" type="number" step="5" value={form.protein_target_g} onChange={(e) => setForm({ ...form, protein_target_g: Number(e.target.value) })} />
+              <label className="form-label" htmlFor="profile-step_target">Daily step target</label>
+              <input id="profile-step_target" className="form-input" type="number" step="500" value={form.step_target} onChange={(e) => edit("step_target", Number(e.target.value))} />
             </div>
           </div>
 
           <div className="form-row">
             <div className="form-group">
-              <label className="form-label">Daily water target (oz)</label>
-              <input className="form-input" type="number" step="5" value={form.water_target_oz} onChange={(e) => setForm({ ...form, water_target_oz: Number(e.target.value) })} />
+              <label className="form-label" htmlFor="profile-calorie_target">Daily calorie target</label>
+              <input id="profile-calorie_target" className="form-input" type="number" step="50" value={form.calorie_target} onChange={(e) => edit("calorie_target", Number(e.target.value))} />
             </div>
             <div className="form-group">
-              <label className="form-label">Target weight (lb)</label>
-              <input className="form-input" type="number" step="1" value={form.target_weight_lb} onChange={(e) => setForm({ ...form, target_weight_lb: Number(e.target.value) })} />
+              <label className="form-label" htmlFor="profile-protein_target_g">Daily protein target (g)</label>
+              <input id="profile-protein_target_g" className="form-input" type="number" step="5" value={form.protein_target_g} onChange={(e) => edit("protein_target_g", Number(e.target.value))} />
+            </div>
+          </div>
+
+          <div className="form-row">
+            <div className="form-group">
+              <label className="form-label" htmlFor="profile-water_target_oz">Daily water target (oz)</label>
+              <input id="profile-water_target_oz" className="form-input" type="number" step="5" value={form.water_target_oz} onChange={(e) => edit("water_target_oz", Number(e.target.value))} />
+            </div>
+            <div className="form-group">
+              <label className="form-label" htmlFor="profile-target_weight_lb">Target weight (lb)</label>
+              <input id="profile-target_weight_lb" className="form-input" type="number" step="1" value={form.target_weight_lb} onChange={(e) => edit("target_weight_lb", Number(e.target.value))} />
             </div>
           </div>
 
@@ -258,6 +350,12 @@ export default function ProfileView({ profile, devices, notifications, onRefresh
         <p style={{ fontSize: 13, color: "#94a3b8", margin: "0 0 18px", lineHeight: 1.55 }}>
           Data from these sources is labeled as imported. Anything you type in manually stays marked as manual entry.
         </p>
+        {deviceError && (
+          <div className="form-error" role="alert" style={{ marginBottom: 16 }}>
+            <AlertTriangle size={16} />
+            <span>{deviceError}</span>
+          </div>
+        )}
         <div className="flex-col" style={{ gap: 10 }}>
           {devices.length === 0 ? (
             <EmptyState

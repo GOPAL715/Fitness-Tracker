@@ -23,7 +23,34 @@ public class OwnedResourceService {
     private static Spec owned(String table, String cols) { return new Spec(table, Scope.USER, columns(cols), false); }
     private static Spec catalog(String table, String cols) { return new Spec(table, Scope.CATALOG, columns(cols), false); }
     private static Spec child(String table, Scope scope, String cols) { return new Spec(table, scope, columns(cols), false); }
-    private static Spec profile() { return new Spec("fitness_profile", Scope.USER, columns("display_name,goal,fitness_level,equipment,limitations,activity_target,weekly_minutes,sleep_target,step_target,calorie_target,protein_target_g,water_target_oz,target_weight_lb"), true); }
+    private static Spec profile() { return new Spec("fitness_profile", Scope.USER, columns("display_name,goal,fitness_level,equipment,limitations,activity_target,weekly_minutes,sleep_target_hours,step_target,calorie_target,protein_target_g,water_target_oz,target_weight_lb"), true); }
+
+    /**
+     * Inclusive lower/upper bound for a single numeric column. A null bound means unbounded on that
+     * side, and {@code exclusive} turns the minimum into a strict "greater than" check.
+     */
+    private record Bound(java.math.BigDecimal min, boolean exclusive, java.math.BigDecimal max) {
+        static Bound atLeast(long min) { return new Bound(java.math.BigDecimal.valueOf(min), false, null); }
+        static Bound between(long min, long max) { return new Bound(java.math.BigDecimal.valueOf(min), false, java.math.BigDecimal.valueOf(max)); }
+        static Bound above(long min) { return new Bound(java.math.BigDecimal.valueOf(min), true, null); }
+    }
+
+    /**
+     * Server-side range checks, keyed by table then column.
+     *
+     * <p>HTML {@code min}/{@code max} attributes are client hints a direct API caller ignores, so the
+     * bounds that actually protect the data live here. Only the fitness profile is constrained today;
+     * the other owned resources keep their existing permissive behaviour.
+     */
+    private static final Map<String, Map<String, Bound>> BOUNDS = Map.of(
+            "fitness_profile", Map.of(
+                    "activity_target", Bound.between(1, 14),
+                    "weekly_minutes", Bound.atLeast(30),
+                    "step_target", Bound.above(0),
+                    "calorie_target", Bound.atLeast(0),
+                    "protein_target_g", Bound.atLeast(0),
+                    "water_target_oz", Bound.atLeast(0),
+                    "sleep_target_hours", Bound.between(0, 24)));
 
     /** Upper bound on any list result, so no endpoint can return an unbounded set. */
     static final int MAX_PAGE = 500;
@@ -92,12 +119,26 @@ public class OwnedResourceService {
             .stream().findFirst().orElseThrow(() -> new NoSuchElementException("Resource not found"));
     }
 
+    /** The caller's existing row for a singleton resource, or null when there is none. */
+    private Map<String, Object> existingForUser(Spec spec, String user) {
+        List<Map<String, Object>> rows = jdbc.queryForList(
+                "SELECT * FROM " + spec.table() + " WHERE " + USER_ID + "=:uid LIMIT 1",
+                new MapSqlParameterSource("uid", uuid(user, "user id")));
+        return rows.isEmpty() ? null : rows.get(0);
+    }
+
     @Transactional
     public Map<String, Object> create(String resource, Map<String, Object> body, String user) {
         Spec spec = writable(require(resource));
         Map<String, Object> values = values(spec, body, true);
         if (spec.scope() == Scope.USER) values.put(USER_ID, uuid(user, "user id"));
         else proveParent(spec.scope(), values, user);
+        // A singleton resource is one row per user, so creating a second one is a client error rather
+        // than a unique-constraint violation. Reporting it as such keeps the 400 contract instead of
+        // surfacing a 500 from the database.
+        if (spec.singleton() && spec.scope() == Scope.USER && existingForUser(spec, user) != null) {
+            throw new IllegalArgumentException(resource + " already exists for this account");
+        }
         String columns = String.join(",", values.keySet());
         String parameters = values.keySet().stream().map(name -> ":" + name).collect(Collectors.joining(","));
         return jdbc.queryForMap("INSERT INTO " + spec.table() + " (" + columns + ") VALUES (" + parameters + ") RETURNING *",
@@ -193,7 +234,43 @@ public class OwnedResourceService {
             result.put(name, name.endsWith("_id") && value instanceof String text ? uuid(text, name) : value);
         }
         if (creating && result.isEmpty()) throw new IllegalArgumentException("At least one field is required");
+        checkBounds(spec, result);
         return result;
+    }
+
+    /**
+     * Enforces the per-column numeric bounds declared in {@link #BOUNDS}.
+     *
+     * <p>A null value means "leave unchanged" on a partial update, so it is not checked. A non-numeric
+     * value is rejected here rather than being handed to the driver, which would surface as a 500.
+     */
+    private void checkBounds(Spec spec, Map<String, Object> values) {
+        Map<String, Bound> rules = BOUNDS.get(spec.table());
+        if (rules == null) return;
+        for (Map.Entry<String, Bound> rule : rules.entrySet()) {
+            if (!values.containsKey(rule.getKey())) continue;
+            Object raw = values.get(rule.getKey());
+            if (raw == null) continue;
+            java.math.BigDecimal number;
+            try {
+                number = raw instanceof java.math.BigDecimal decimal
+                        ? decimal
+                        : new java.math.BigDecimal(String.valueOf(raw));
+            } catch (NumberFormatException e) {
+                throw new IllegalArgumentException(rule.getKey() + " must be a number");
+            }
+            Bound bound = rule.getValue();
+            if (bound.min() != null) {
+                int below = number.compareTo(bound.min());
+                if (below < 0 || (below == 0 && bound.exclusive())) {
+                    throw new IllegalArgumentException(rule.getKey() + " must be "
+                            + (bound.exclusive() ? "greater than " : "at least ") + bound.min().toPlainString());
+                }
+            }
+            if (bound.max() != null && number.compareTo(bound.max()) > 0) {
+                throw new IllegalArgumentException(rule.getKey() + " must be at most " + bound.max().toPlainString());
+            }
+        }
     }
 
     private Spec writable(Spec spec) {
