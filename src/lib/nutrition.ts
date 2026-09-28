@@ -17,33 +17,45 @@ const EMPTY: NutritionValues = {
 
 /**
  * Nutrition for a portion of a food, derived from its per-100g values.
- * Deterministic by design: the food row is the source of truth and portion
- * size only scales it, so the same input always produces the same output.
+ *
+ * <p>The catalog holds calories and every macro per 100 g, so a portion is
+ * per100g * grams / 100. This is the same formula the server applies in
+ * NutritionCalculator and the same one the composite meal endpoint uses, so a draft preview here
+ * and the meal the server stores cannot disagree.
+ *
+ * <p>The food's serving_size is display metadata and is deliberately not consulted. It used to act as a
+ * divisor on the server while the browser divided by 100, so any food catalogued at other than
+ * exactly 100 g produced a stored total that did not match the one shown.
+ *
+ * <p>A non-positive or non-finite portion weight yields zeros rather than negative nutrition, and a
+ * missing macro reads as zero, so no input can poison a daily total with NaN or a negative.
  */
 export function calculateNutrition(food: Food, grams: number): NutritionValues {
   if (!Number.isFinite(grams) || grams <= 0) return { ...EMPTY };
   const f = grams / 100;
+  const per = (v: number | null | undefined) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
   return {
-    calories: round(food.calories * f, 1),
-    protein_g: round(food.protein_g * f, 1),
-    carbs_g: round(food.carbs_g * f, 1),
-    fat_g: round(food.fat_g * f, 1),
-    fiber_g: round(food.fiber_g * f, 1),
-    sugar_g: round(food.sugar_g * f, 1),
-    sodium_mg: round(food.sodium_mg * f, 1),
+    calories: round(per(food.calories) * f, 2),
+    protein_g: round(per(food.protein_g) * f, 2),
+    carbs_g: round(per(food.carbs_g) * f, 2),
+    fat_g: round(per(food.fat_g) * f, 2),
+    fiber_g: round(per(food.fiber_g) * f, 2),
+    sugar_g: round(per(food.sugar_g) * f, 2),
+    sodium_mg: round(per(food.sodium_mg) * f, 2),
   };
 }
+/** Sums portions at the same two-decimal scale the server persists, so the two agree exactly. */
 
 export function sumNutrition(items: NutritionValues[]): NutritionValues {
   return items.reduce(
     (acc, n) => ({
-      calories: round(acc.calories + n.calories, 1),
-      protein_g: round(acc.protein_g + n.protein_g, 1),
-      carbs_g: round(acc.carbs_g + n.carbs_g, 1),
-      fat_g: round(acc.fat_g + n.fat_g, 1),
-      fiber_g: round(acc.fiber_g + n.fiber_g, 1),
-      sugar_g: round(acc.sugar_g + n.sugar_g, 1),
-      sodium_mg: round(acc.sodium_mg + n.sodium_mg, 1),
+      calories: round(acc.calories + n.calories, 2),
+      protein_g: round(acc.protein_g + n.protein_g, 2),
+      carbs_g: round(acc.carbs_g + n.carbs_g, 2),
+      fat_g: round(acc.fat_g + n.fat_g, 2),
+      fiber_g: round(acc.fiber_g + n.fiber_g, 2),
+      sugar_g: round(acc.sugar_g + n.sugar_g, 2),
+      sodium_mg: round(acc.sodium_mg + n.sodium_mg, 2),
     }),
     { ...EMPTY }
   );

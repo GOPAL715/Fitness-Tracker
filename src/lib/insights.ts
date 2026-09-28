@@ -74,12 +74,16 @@ export function computeConsistency(workouts: Workout[], days: number): number {
 }
 
 export function macroTotals(meals: Meal[]): { calories: number; protein: number; carbs: number; fat: number } {
+  // Every macro is read through the same null guard. A meal written before a macro was required
+  // can carry a null, and `acc + null` yields null, which then turned every ring and percentage on the
+  // screen into NaN. Absent optional nutrition is simply no nutrition logged today.
+  const num = (v: number | null | undefined) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
   return meals.reduce(
     (acc, m) => ({
-      calories: acc.calories + m.calories,
-      protein: acc.protein + m.protein_g,
-      carbs: acc.carbs + m.carbs_g,
-      fat: acc.fat + m.fat_g,
+      calories: acc.calories + num(m.calories),
+      protein: acc.protein + num(m.protein_g),
+      carbs: acc.carbs + num(m.carbs_g),
+      fat: acc.fat + num(m.fat_g),
     }),
     { calories: 0, protein: 0, carbs: 0, fat: 0 }
   );

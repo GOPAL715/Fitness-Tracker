@@ -1,17 +1,16 @@
 import { useMemo, useRef, useState } from "react";
 import { Camera, Upload, Sparkles, Check, Trash2, Search, Plus, AlertTriangle, RefreshCw, X } from "lucide-react";
 import { MEAL_TYPES } from "../lib/domain";
-import { apiData } from "../lib/api/dataAdapter";
-import { analyzeFoodPhoto } from "../lib/api/foodScannerApi";
+import { analyzeFoodPhoto, correctScanItems, confirmFoodScan } from "../lib/api/foodScannerApi";
 import type { Food } from "../lib/types";
 import { Modal } from "../components/ui";
 import { calculateNutrition, isValidImageFile, compressImage, sumNutrition } from "../lib/nutrition";
-import { parseDetections, confidenceLabel, needsReview } from "../lib/foodScan";
-import { useAuth } from "../lib/auth";
+import { confidenceLabel, needsReview } from "../lib/foodScan";
 import { todayISO, round } from "../lib/utils";
 
 type DraftItem = {
   key: string;
+  itemId: string;
   food_id: string | null;
   food_name: string;
   grams: number;
@@ -26,7 +25,6 @@ let counter = 0;
 const nextKey = () => `i${++counter}`;
 
 export default function FoodScannerModal({ foods, onClose, onSaved }: Props) {
-  const { user } = useAuth();
   
   const fileInput = useRef<HTMLInputElement>(null);
   const cameraInput = useRef<HTMLInputElement>(null);
@@ -36,7 +34,7 @@ export default function FoodScannerModal({ foods, onClose, onSaved }: Props) {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [items, setItems] = useState<DraftItem[]>([]);
   const [mealType, setMealType] = useState<string>("Lunch");
-  const [apiDataScanId, setScanId] = useState<string | null>(null);
+  const [scanId, setScanId] = useState<string | null>(null);
   const [aiModel, setAiModel] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notConfigured, setNotConfigured] = useState(false);
@@ -83,10 +81,12 @@ export default function FoodScannerModal({ foods, onClose, onSaved }: Props) {
       const compressed = await compressImage(file);
       const payload = await analyzeFoodPhoto(compressed);
       const rows = Array.isArray(payload?.items) ? payload.items : [];
-      const parsed = parseDetections({ items: rows });
-      if (!parsed.ok) throw new Error(parsed.reason);
-      setScanId(payload.apiDataScanId ?? payload.scan_id ?? null); setAiModel(payload.ai_model ?? null);
-      setItems(rows.map((row: Record<string, unknown>) => ({ key: nextKey(), food_id: (row.food_id as string) ?? null, food_name: String(row.food_name ?? "Unknown food"), grams: Number(row.estimated_grams ?? 100), confidence: row.confidence == null ? null : Number(row.confidence), user_edited: false })));
+      if (rows.length === 0) throw new Error("No food was detected in that photo. Try a clearer shot.");
+      setScanId(payload.id ?? null);
+      setAiModel(payload.model ?? null);
+      // The item id comes from the server and is what a correction is addressed by, so two items
+      // that happen to share a name are still corrected independently.
+      setItems(rows.map((row) => ({ key: nextKey(), itemId: row.id, food_id: row.foodId ?? null, food_name: row.name || "Unknown food", grams: Number(row.grams ?? 100), confidence: row.confidence == null ? null : Number(row.confidence), user_edited: false })));
       setStage("review");
     } catch (e) { setError(e instanceof Error ? e.message : "Something went wrong while analysing that photo. Please try again."); setStage("preview"); }
   }
@@ -106,81 +106,42 @@ export default function FoodScannerModal({ foods, onClose, onSaved }: Props) {
     setFoodSearch("");
   }
 
-  function addManualFood(food: Food) {
-    setItems((prev) => [...prev, { key: nextKey(), food_id: food.id, food_name: food.name, grams: 100, confidence: null, user_edited: true }]);
-    setEditingKey(null);
-    setFoodSearch("");
-  }
 
+  /**
+   * Confirms the scan through the server, in the two steps the server owns.
+   *
+   * <p>Corrections go out addressed by item id, and confirmation is a single transactional call that
+   * creates the meal and its items together. This used to insert a meal, then its items, then patch
+   * the scan, all from the browser, so a failure part way through left a meal with no items and a
+   * scan pointing at it. The server also derives the totals, so the numbers shown here and the
+   * numbers stored cannot drift apart.
+   */
   async function confirmMeal() {
-    if (!user || items.length === 0) return;
-    if (totals.calories <= 0) {
-      setError("None of these foods matched the nutrition database. Adjust the items before saving.");
+    if (!scanId || items.length === 0) return;
+    const unmatched = items.filter((i) => !i.food_id);
+    if (unmatched.length > 0) {
+      setError("Some items have no match in the nutrition database. Use the Change food button on each of them before saving.");
       return;
     }
     setSaving(true);
     setError(null);
-
-    const { data: meal, error: mealError } = await apiData
-      .from("meals")
-      .insert({
-        user_id: user.id,
-        meal_date: todayISO(),
-        meal_type: mealType,
-        name: items.map((i) => i.food_name).slice(0, 3).join(", ") + (items.length > 3 ? ` +${items.length - 3}` : ""),
-        calories: Math.round(totals.calories),
-        protein_g: Math.round(totals.protein_g),
-        carbs_g: Math.round(totals.carbs_g),
-        fat_g: Math.round(totals.fat_g),
-        fiber_g: Math.round(totals.fiber_g),
-        source: "scanner",
-      })
-      .select("id")
-      .maybeSingle();
-
-    if (mealError || !meal) {
+    try {
+      // Only items the user actually changed are sent; the rest are already correct on the server,
+      // which also holds the nutrition for each of them.
+      const corrections = items
+        .filter((i) => i.user_edited)
+        .map((i) => ({ itemId: i.itemId, foodId: i.food_id, name: i.food_name, grams: i.grams }));
+      if (corrections.length > 0) await correctScanItems(scanId, corrections);
+      await confirmFoodScan(scanId, { mealDate: todayISO(), mealType: mealType.toUpperCase() });
+      onSaved();
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "That meal could not be saved. Please try again.");
+    } finally {
       setSaving(false);
-      setError("That meal could not be saved. Please try again.");
-      return;
     }
-
-    const rows = items.map((i) => {
-      const food = foods.find((f) => f.id === i.food_id);
-      const values = food ? calculateNutrition(food, i.grams) : { calories: 0, protein_g: 0, carbs_g: 0, fat_g: 0, fiber_g: 0, sugar_g: 0, sodium_mg: 0 };
-      return {
-        meal_id: meal.id,
-        food_id: i.food_id,
-        food_name: i.food_name,
-        quantity: 1,
-        grams: i.grams,
-        calories: values.calories,
-        protein_g: values.protein_g,
-        carbs_g: values.carbs_g,
-        fat_g: values.fat_g,
-        fiber_g: values.fiber_g,
-        source: "scanner",
-      };
-    });
-
-    await apiData.from("meal_items").insert(rows);
-
-    // Preserve the user's corrections and link the scan to the saved meal.
-    if (apiDataScanId) {
-      await apiData.from("food_scans").update({ status: "confirmed", meal_id: meal.id }).eq("id", apiDataScanId);
-      for (const item of items) {
-        if (!item.user_edited) continue;
-        await apiData
-          .from("food_scan_items")
-          .update({ confirmed_grams: item.grams, user_edited: true })
-          .eq("scan_id", apiDataScanId)
-          .eq("food_name", item.food_name);
-      }
-    }
-
-    setSaving(false);
-    onSaved();
-    onClose();
   }
+
 
   const analysisSteps = ["Detecting foods", "Estimating portions", "Looking up nutrition", "Calculating nutrition"];
 
@@ -215,8 +176,8 @@ export default function FoodScannerModal({ foods, onClose, onSaved }: Props) {
                 <Upload size={16} /> Upload a photo
               </button>
             </div>
-            <input ref={cameraInput} type="file" accept="image/jpeg,image/png,image/webp" capture="environment" hidden onChange={(e) => handleFile(e.target.files?.[0])} />
-            <input ref={fileInput} type="file" accept="image/jpeg,image/png,image/webp" hidden onChange={(e) => handleFile(e.target.files?.[0])} />
+            <input data-testid="scanner-camera" ref={cameraInput} type="file" accept="image/jpeg,image/png,image/webp" capture="environment" hidden onChange={(e) => handleFile(e.target.files?.[0])} />
+            <input data-testid="scanner-file" ref={fileInput} type="file" accept="image/jpeg,image/png,image/webp" hidden onChange={(e) => handleFile(e.target.files?.[0])} />
           </div>
         )}
 
@@ -326,9 +287,6 @@ export default function FoodScannerModal({ foods, onClose, onSaved }: Props) {
             <p className="estimate-note">Portions and nutrition from a photo are estimates. Adjust anything that looks wrong, then confirm.</p>
 
             <div style={{ display: "flex", gap: 10, justifyContent: "space-between", flexWrap: "wrap" }}>
-              <button className="btn btn-secondary" onClick={() => setEditingKey("__add__")}>
-                <Plus size={16} /> Add a food
-              </button>
               <div style={{ display: "flex", gap: 10 }}>
                 <button className="btn btn-secondary" onClick={() => setStage("preview")}>
                   <RefreshCw size={15} /> Re-analyze
@@ -347,7 +305,7 @@ export default function FoodScannerModal({ foods, onClose, onSaved }: Props) {
           <div className="picker-overlay">
             <div className="picker">
               <div className="picker-head">
-                <span style={{ fontWeight: 700, color: "#f0f6fc" }}>{editingKey === "__add__" ? "Add a food" : "Change food"}</span>
+                <span style={{ fontWeight: 700, color: "#f0f6fc" }}>Change food</span>
                 <button className="icon-btn" onClick={() => { setEditingKey(null); setFoodSearch(""); }} aria-label="Close">
                   <X size={16} color="#94a3b8" />
                 </button>
@@ -358,9 +316,9 @@ export default function FoodScannerModal({ foods, onClose, onSaved }: Props) {
               </div>
               <div className="picker-list">
                 {filteredFoods.map((f) => (
-                  <button key={f.id} className="picker-item" onClick={() => (editingKey === "__add__" ? addManualFood(f) : changeFood(editingKey, f))}>
+                  <button key={f.id} className="picker-item" onClick={() => changeFood(editingKey, f)}>
                     <span style={{ fontWeight: 600, color: "#f0f6fc" }}>{f.name}</span>
-                    <span className="stat-meta">{f.calories} kcal · {f.protein_g}g protein per {f.serving_size}{f.serving_unit}</span>
+                    <span className="stat-meta">{f.calories} kcal · {f.protein_g}g protein per 100g</span>
                   </button>
                 ))}
                 {filteredFoods.length === 0 && (

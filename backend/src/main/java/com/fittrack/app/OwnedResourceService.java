@@ -16,9 +16,13 @@ import java.util.stream.Collectors;
 public class OwnedResourceService {
     private final NamedParameterJdbcTemplate jdbc;
     private final ObjectMapper mapper;
-    public OwnedResourceService(NamedParameterJdbcTemplate jdbc, ObjectMapper mapper) { this.jdbc = jdbc; this.mapper = mapper; }
+    private final com.fittrack.nutrition.NutritionCalculator nutrition;
+    public OwnedResourceService(NamedParameterJdbcTemplate jdbc, ObjectMapper mapper,
+                                com.fittrack.nutrition.NutritionCalculator nutrition) {
+        this.jdbc = jdbc; this.mapper = mapper; this.nutrition = nutrition;
+    }
 
-    private enum Scope { USER, CATALOG, WORKOUT_EXERCISE, EXERCISE_SET, TEMPLATE_EXERCISE, MEAL_ITEM, SCAN_ITEM, HABIT_LOG }
+    private enum Scope { USER, CATALOG, SERVER_OWNED, WORKOUT_EXERCISE, EXERCISE_SET, TEMPLATE_EXERCISE, MEAL_ITEM, SCAN_ITEM, HABIT_LOG }
     private record Spec(String table, Scope scope, Set<String> columns, boolean singleton) { Spec { columns = Set.copyOf(columns); } }
     private static final String USER_ID = "user_id";
     private static final String ID = "id";
@@ -26,6 +30,8 @@ public class OwnedResourceService {
     private static Spec owned(String table, String cols) { return new Spec(table, Scope.USER, columns(cols), false); }
     private static Spec catalog(String table, String cols) { return new Spec(table, Scope.CATALOG, columns(cols), false); }
     private static Spec child(String table, Scope scope, String cols) { return new Spec(table, scope, columns(cols), false); }
+    /** Readable and deletable through the generic API, but never writable. */
+    private static Spec readOnly(String table, String cols) { return new Spec(table, Scope.SERVER_OWNED, columns(cols), false); }
     private static Spec profile() { return new Spec("fitness_profile", Scope.USER, columns("display_name,goal,fitness_level,equipment,limitations,activity_target,weekly_minutes,sleep_target_hours,step_target,calorie_target,protein_target_g,water_target_oz,target_weight_lb"), true); }
 
     /**
@@ -70,7 +76,14 @@ public class OwnedResourceService {
                     "duration_minutes", Bound.between(0, 1440),
                     "calories_burned", Bound.atLeast(0),
                     "perceived_effort", Bound.between(1, 10),
-                    "distance_miles", Bound.atLeast(0)));
+                    "distance_miles", Bound.atLeast(0)),
+            // Phase 8: the portion weight is the only nutrition input a client supplies, and it is
+            // bounded here exactly as the composite endpoint's DTO bounds it. Without this the generic
+            // path accepted a negative or zero weight, and a negative portion produced a negative
+            // calorie count. The macro columns themselves are no longer writable at all.
+            "meal_items", Map.of(
+                    "grams", Bound.between(1, 5000),
+                    "quantity", Bound.between(0, 1000)));
 
     /**
      * Columns stored as a comma-separated string but exposed as an array in the JSON contract,
@@ -114,8 +127,16 @@ public class OwnedResourceService {
         Map.entry("plan-sessions", owned("plan_sessions", "day_index,title,workout_type,intensity,duration_minutes,completed")),
         Map.entry("personal-records", owned("personal_records", "exercise,record_value,unit,achieved_date,previous_value")),
         Map.entry("goals", owned("goals", "goal_type,title,description,start_value,target_value,current_value,unit,start_date,target_date,status")),
-        Map.entry("meals", owned("meals", "meal_date,meal_type,name,source,calories,protein_g,carbs_g,fat_g,fiber_g")),
-        Map.entry("food-scans", owned("food_scans", "meal_id,status,model,image_path,error")),
+        // Phase 8: the nutrition macro columns are server-derived and are no longer writable here.
+        // Totals come from the food catalog and the portion weight through NutritionCalculator, so
+        // accepting them from a request body would let a caller state any calorie count they liked.
+        // The meal's own descriptive fields stay writable, and its row is recomputed after a write.
+        Map.entry("meals", owned("meals", "meal_date,meal_type,name,source")),
+        // Phase 8: image_path is server-controlled. It names the stored object the scanner created,
+        // and allowing a client to write it would let it point at another key; status, model and
+        // error are equally server-owned. Scans are read and deleted through /api/v1/food-scans,
+        // where deletion also removes the stored object.
+        Map.entry("food-scans", readOnly("food_scans", "meal_id,status,model,image_path,error")),
         Map.entry("ai-usage", owned("ai_usage", "feature,model,input_tokens,output_tokens,success,estimated_cost")),
         Map.entry("habits", owned("habits", "name,description,icon,target_per_week,color,active")),
         Map.entry("habit-logs", child("habit_logs", Scope.HABIT_LOG, "habit_id,log_date,completed")),
@@ -130,7 +151,7 @@ public class OwnedResourceService {
         Map.entry("workout-exercises", child("workout_exercises", Scope.WORKOUT_EXERCISE, "workout_session_id,exercise_id,order_index,notes")),
         Map.entry("exercise-sets", child("exercise_sets", Scope.EXERCISE_SET, "workout_exercise_id,set_number,reps,weight,weight_unit,duration_seconds,distance,distance_unit,rpe,completed")),
         Map.entry("workout-template-exercises", child("workout_template_exercises", Scope.TEMPLATE_EXERCISE, "template_id,exercise_id,order_index,target_sets,target_reps,target_weight")),
-        Map.entry("meal-items", child("meal_items", Scope.MEAL_ITEM, "meal_id,food_id,food_name,quantity,grams,calories,protein_g,carbs_g,fat_g,fiber_g,source")),
+        Map.entry("meal-items", child("meal_items", Scope.MEAL_ITEM, "meal_id,food_id,food_name,quantity,grams,source")),
         Map.entry("food-scan-items", child("food_scan_items", Scope.SCAN_ITEM, "scan_id,food_id,food_name,estimated_grams,confirmed_grams,confidence,calories,protein_g,carbs_g,fat_g,fiber_g,sugar_g,sodium_mg,user_edited"))
     );
 
@@ -138,7 +159,7 @@ public class OwnedResourceService {
         Spec spec = require(resource);
         var params = new MapSqlParameterSource();
         String predicate = "";
-        if (spec.scope() == Scope.USER) {
+        if (spec.scope() == Scope.USER || spec.scope() == Scope.SERVER_OWNED) {
             params.addValue("uid", uuid(user, "user id"));
             predicate = " WHERE t." + USER_ID + "=:uid";
         } else if (spec.scope() != Scope.CATALOG) {
@@ -156,7 +177,7 @@ public class OwnedResourceService {
         UUID resourceId = uuid(id, "resource id");
         var params = new MapSqlParameterSource("id", resourceId);
         String predicate;
-        if (spec.scope() == Scope.USER) {
+        if (spec.scope() == Scope.USER || spec.scope() == Scope.SERVER_OWNED) {
             params.addValue("uid", uuid(user, "user id"));
             predicate = " WHERE t." + USER_ID + "=:uid AND t.id=:id";
         } else if (spec.scope() == Scope.CATALOG) {
@@ -425,8 +446,29 @@ public class OwnedResourceService {
         }
         String columns = String.join(",", values.keySet());
         String parameters = values.keySet().stream().map(name -> ":" + name).collect(Collectors.joining(","));
-        return jdbc.queryForMap("INSERT INTO " + spec.table() + " (" + columns + ") VALUES (" + parameters + ") RETURNING *",
+        Map<String, Object> inserted = jdbc.queryForMap("INSERT INTO " + spec.table() + " (" + columns + ") VALUES (" + parameters + ") RETURNING *",
             new MapSqlParameterSource(values));
+        // Phase 8: a meal's macros are derived from its items, never accepted from the caller, so the
+        // row is recalculated the moment it is written. Same for an item, whose own totals come from
+        // the catalog and the portion weight.
+        recalculateNutrition(spec, values, inserted);
+        return inserted;
+    }
+
+    /**
+     * Restores server authority over a meal's nutrition after a generic write.
+     *
+     * <p>Writes to {@code meal_items} recompute the parent meal, because that is the row whose totals
+     * the product reads. A write to {@code meals} itself recomputes that meal, so a row created with
+     * no macros reads as a genuine zero rather than as whatever the caller sent.
+     */
+    private void recalculateNutrition(Spec spec, Map<String, Object> values, Map<String, Object> written) {
+        if ("meal_items".equals(spec.table())) {
+            Object mealId = values.get("meal_id") != null ? values.get("meal_id") : written.get("meal_id");
+            if (mealId != null) nutrition.recomputeMeal((UUID) mealId);
+        } else if ("meals".equals(spec.table()) && written.get("id") != null) {
+            nutrition.recomputeMeal((UUID) written.get("id"));
+        }
     }
 
     @Transactional
@@ -438,6 +480,8 @@ public class OwnedResourceService {
         if (spec.scope() != Scope.USER) proveParent(spec.scope(), values, user, false);
         String assignments = values.keySet().stream().map(name -> name + "=:" + name).collect(Collectors.joining(","));
         jdbc.update("UPDATE " + spec.table() + " SET " + assignments + " WHERE id=:id", new MapSqlParameterSource(values).addValue("id", uuid(id, "resource id")));
+        // A portion weight edited on an item changes the meal's totals, so they are derived again here.
+        recalculateNutrition(spec, values, Map.of("id", uuid(id, "resource id")));
         return one(resource, id, user);
     }
 
@@ -447,6 +491,16 @@ public class OwnedResourceService {
         // Without it, DELETE removed shared catalog rows such as exercises and foods.
         Spec spec = writable(require(resource));
         one(resource, id, user);
+        // Removing an item changes what the meal adds up to, so the parent is recalculated after the
+        // delete. Deleting the meal itself cascades to its items and needs no recalculation.
+        if ("meal_items".equals(spec.table())) {
+            UUID mealId = jdbc.queryForObject("SELECT meal_id FROM " + spec.table() + " WHERE id=:id",
+                    new MapSqlParameterSource("id", uuid(id, "resource id")), UUID.class);
+            jdbc.update("DELETE FROM " + spec.table() + " WHERE id=:id",
+                    new MapSqlParameterSource("id", uuid(id, "resource id")));
+            if (mealId != null) nutrition.recomputeMeal(mealId);
+            return;
+        }
         jdbc.update("DELETE FROM " + spec.table() + " WHERE id=:id",
                 new MapSqlParameterSource("id", uuid(id, "resource id")));
     }
@@ -602,7 +656,7 @@ public class OwnedResourceService {
     }
 
     private Spec writable(Spec spec) {
-        if (spec.scope() == Scope.CATALOG || "ai_usage".equals(spec.table())) throw new org.springframework.security.access.AccessDeniedException("Resource is read-only");
+        if (spec.scope() == Scope.CATALOG || spec.scope() == Scope.SERVER_OWNED || "ai_usage".equals(spec.table())) throw new org.springframework.security.access.AccessDeniedException("Resource is read-only");
         return spec;
     }
     private Spec require(String resource) {

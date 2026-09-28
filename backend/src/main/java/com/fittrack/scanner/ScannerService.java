@@ -2,6 +2,9 @@ package com.fittrack.scanner;
 
 import com.fittrack.ai.AiProvider;
 import com.fittrack.ai.AiUsageService;
+import com.fittrack.nutrition.NutritionCalculator;
+import com.fittrack.nutrition.NutritionCalculator.FoodNutrition;
+import com.fittrack.nutrition.NutritionCalculator.Portion;
 import com.fittrack.scanner.ScannerController.ConfirmRequest;
 import com.fittrack.scanner.ScannerController.ItemCorrection;
 import com.fittrack.storage.PrivateObjectStorage;
@@ -28,9 +31,11 @@ public class ScannerService {
     private final PrivateObjectStorage storage;
     private final AiProvider ai;
     private final AiUsageService usage;
+    private final NutritionCalculator nutrition;
 
-    public ScannerService(JdbcTemplate jdbc, PrivateObjectStorage storage, AiProvider ai, AiUsageService usage) {
-        this.jdbc = jdbc; this.storage = storage; this.ai = ai; this.usage = usage;
+    public ScannerService(JdbcTemplate jdbc, PrivateObjectStorage storage, AiProvider ai,
+                          AiUsageService usage, NutritionCalculator nutrition) {
+        this.jdbc = jdbc; this.storage = storage; this.ai = ai; this.usage = usage; this.nutrition = nutrition;
     }
 
     @Transactional
@@ -93,8 +98,13 @@ public class ScannerService {
             FoodMatch m = c.foodId() == null ? (name == null ? null : match(name)) : byId(c.foodId());
             if (name == null && m == null) throw bad("A corrected name or foodId is required");
             if (name == null) name = jdbc.queryForObject("SELECT name FROM foods WHERE id=?", String.class, m.id());
+            // Zeroed first, then recomputed from the canonical calculator, so a correction can never
+            // leave a stale total behind for a food that was swapped out.
             if (jdbc.update("UPDATE food_scan_items SET food_id=?,food_name=?,confirmed_grams=?,user_edited=true,calories=0,protein_g=0,carbs_g=0,fat_g=0,fiber_g=0,sugar_g=0,sodium_mg=0 WHERE id=? AND scan_id=?", m == null ? null : m.id(), name, c.grams(), c.itemId(), id) == 0) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Food scan item not found");
-            if (m != null) jdbc.update("UPDATE food_scan_items SET calories=?,protein_g=?,carbs_g=?,fat_g=?,fiber_g=?,sugar_g=?,sodium_mg=? WHERE id=?", nut(c.grams(),m.calories(),m.servingSize()), nut(c.grams(),m.protein(),m.servingSize()), nut(c.grams(),m.carbs(),m.servingSize()), nut(c.grams(),m.fat(),m.servingSize()), nut(c.grams(),m.fiber(),m.servingSize()), nut(c.grams(),m.sugar(),m.servingSize()), nut(c.grams(),m.sodium(),m.servingSize()), c.itemId());
+            if (m != null) {
+                Portion p = NutritionCalculator.forGrams(m.nutrition(), c.grams());
+                jdbc.update("UPDATE food_scan_items SET calories=?,protein_g=?,carbs_g=?,fat_g=?,fiber_g=?,sugar_g=?,sodium_mg=? WHERE id=?", p.calories(), p.proteinG(), p.carbsG(), p.fatG(), p.fiberG(), p.sugarG(), p.sodiumMg(), c.itemId());
+            }
         }
         return get(id, principal);
     }
@@ -109,10 +119,15 @@ public class ScannerService {
         LocalDate date = request.mealDate() == null ? LocalDate.now() : request.mealDate();
         String mealType = request.mealType() == null ? "SNACK" : request.mealType().trim().toUpperCase(Locale.ROOT);
         if (!Set.of("BREAKFAST", "LUNCH", "DINNER", "SNACK").contains(mealType)) throw bad("Invalid meal type");
-        jdbc.update("INSERT INTO meals(id,user_id,meal_date,meal_type,name,source,calories,protein_g,carbs_g,fat_g) VALUES (?,?,?,?,?,?,?,?,?,?)",
-            meal, user, date, mealType, request.mealName() == null ? "Scanned meal" : request.mealName().trim(), "food_scan", scan.totalCalories(), scan.totalProteinG(), scan.totalCarbsG(), scan.totalFatG());
+        // fiber_g is written on the item and folded into the meal by the same recompute every other
+        // meal uses. It used to be omitted from this insert, so every scanned meal reported zero
+        // fiber while the same food entered manually reported its real value. The meal totals are
+        // derived from the catalog rather than copied from the scan summary, so the two cannot drift.
+        jdbc.update("INSERT INTO meals(id,user_id,meal_date,meal_type,name,source,calories,protein_g,carbs_g,fat_g,fiber_g) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            meal, user, date, mealType, request.mealName() == null ? "Scanned meal" : request.mealName().trim(), "food_scan", NutritionCalculator.Portion.zero().calories(), NutritionCalculator.Portion.zero().proteinG(), NutritionCalculator.Portion.zero().carbsG(), NutritionCalculator.Portion.zero().fatG(), NutritionCalculator.Portion.zero().fiberG());
         for (ItemView item : scan.items()) jdbc.update("INSERT INTO meal_items(id,meal_id,food_id,food_name,quantity,grams,calories,protein_g,carbs_g,fat_g,fiber_g,source) VALUES (?,?,?,?,?,?,?,?,?,?,?,'food_scan')",
             UUID.randomUUID(), meal, item.foodId(), item.name(), item.grams(), item.grams(), item.calories(), item.proteinG(), item.carbsG(), item.fatG(), item.fiberG());
+        nutrition.recomputeMeal(meal);
         int changed = jdbc.update("UPDATE food_scans SET status='confirmed',meal_id=? WHERE id=? AND user_id=? AND status='completed'", meal, id, user);
         if (changed != 1) throw new ResponseStatusException(HttpStatus.CONFLICT, "Scan was already confirmed");
         return get(id, principal);
@@ -139,21 +154,25 @@ public class ScannerService {
     private void insertItem(UUID scanId, AiProvider.FoodItem item) {
         if (item == null || item.name() == null || item.name().isBlank() || item.name().trim().length() > 160 || !Double.isFinite(item.grams()) || item.grams() < 1 || item.grams() > 5000 || !Double.isFinite(item.confidence()) || item.confidence() < 0 || item.confidence() > 1) throw bad("Invalid food detection");
         FoodMatch m=match(item.name()); BigDecimal grams=BigDecimal.valueOf(item.grams());
+        // One canonical per-100g calculation for the item. An unmatched food contributes zero rather
+        // than being guessed at, and the user is prompted to correct it before the meal is saved.
+        Portion p = m==null ? Portion.zero() : NutritionCalculator.forGrams(m.nutrition(), grams);
         jdbc.update("INSERT INTO food_scan_items(id,scan_id,food_id,food_name,estimated_grams,confirmed_grams,confidence,calories,protein_g,carbs_g,fat_g,fiber_g,sugar_g,sodium_mg,user_edited) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,false)",
             UUID.randomUUID(),scanId,m==null?null:m.id(),item.name().trim(),grams,grams,BigDecimal.valueOf(item.confidence()),
-            m==null?BigDecimal.ZERO:nut(grams,m.calories(),m.servingSize()),m==null?BigDecimal.ZERO:nut(grams,m.protein(),m.servingSize()),m==null?BigDecimal.ZERO:nut(grams,m.carbs(),m.servingSize()),m==null?BigDecimal.ZERO:nut(grams,m.fat(),m.servingSize()),
-            m==null?BigDecimal.ZERO:nut(grams,m.fiber(),m.servingSize()),m==null?BigDecimal.ZERO:nut(grams,m.sugar(),m.servingSize()),m==null?BigDecimal.ZERO:nut(grams,m.sodium(),m.servingSize()));
+            p.calories(),p.proteinG(),p.carbsG(),p.fatG(),p.fiberG(),p.sugarG(),p.sodiumMg());
     }
     private FoodMatch byId(UUID id) {
-        List<FoodMatch> found = jdbc.query("SELECT id,calories,protein_g,carbs_g,fat_g,fiber_g,sugar_g,sodium_mg,serving_size FROM foods WHERE id=?", (rs,n) -> new FoodMatch(rs.getObject("id",UUID.class),n(rs,"calories"),n(rs,"protein_g"),n(rs,"carbs_g"),n(rs,"fat_g"),n(rs,"fiber_g"),n(rs,"sugar_g"),n(rs,"sodium_mg"),n(rs,"serving_size")), id);
-        return found.isEmpty() ? null : found.get(0);
+        FoodNutrition n = nutrition.readFood(id);
+        return n == null ? null : new FoodMatch(id, n);
     }
+    // Resolves a detected name through the indexed generated column. The previous form applied
+    // lower(trim(name)) to the column itself, which cannot use an index and scanned the whole
+    // catalog once per detected item.
     private FoodMatch match(String name) {
-        List<FoodMatch> matches=jdbc.query("SELECT id,calories,protein_g,carbs_g,fat_g,fiber_g,sugar_g,sodium_mg,serving_size FROM foods WHERE lower(trim(name))=lower(trim(?)) ORDER BY name LIMIT 1",(rs,n)->new FoodMatch(rs.getObject("id",UUID.class),n(rs,"calories"),n(rs,"protein_g"),n(rs,"carbs_g"),n(rs,"fat_g"),n(rs,"fiber_g"),n(rs,"sugar_g"),n(rs,"sodium_mg"),n(rs,"serving_size")),name);
-        return matches.isEmpty()?null:matches.get(0);
+        UUID id = nutrition.findFoodIdByName(name);
+        return id == null ? null : byId(id);
     }
     private static BigDecimal n(java.sql.ResultSet r,String c)throws java.sql.SQLException{BigDecimal v=r.getBigDecimal(c);return v==null?BigDecimal.ZERO:v;}
-    private static BigDecimal nut(BigDecimal grams,BigDecimal per,BigDecimal serving){return per.signum()==0||serving.signum()==0?BigDecimal.ZERO:scale(grams.multiply(per).divide(serving,6,RoundingMode.HALF_UP));}
     private static BigDecimal scale(BigDecimal v){return v.setScale(2,RoundingMode.HALF_UP);}
     private ScanView view(UUID id,UUID user){return jdbc.query("SELECT * FROM food_scans WHERE id=? AND user_id=?",(rs,n)->{
         List<ItemView> items=jdbc.query("SELECT * FROM food_scan_items WHERE scan_id=? ORDER BY id",(ir,row)->new ItemView(ir.getObject("id",UUID.class),ir.getObject("food_id",UUID.class),ir.getString("food_name"),ir.getBigDecimal("confirmed_grams"),ir.getBigDecimal("confidence"),ir.getBigDecimal("calories"),ir.getBigDecimal("protein_g"),ir.getBigDecimal("carbs_g"),ir.getBigDecimal("fat_g"),ir.getBigDecimal("fiber_g"),ir.getBigDecimal("sugar_g"),ir.getBigDecimal("sodium_mg"),ir.getBoolean("user_edited")),id);
@@ -164,7 +183,7 @@ public class ScannerService {
     private static BigDecimal add(BigDecimal a,BigDecimal b){return nz(a).add(nz(b));} private static BigDecimal nz(BigDecimal v){return v==null?BigDecimal.ZERO:v;}
     private static UUID user(String p){if(p==null)throw new ResponseStatusException(HttpStatus.UNAUTHORIZED);try{return UUID.fromString(p);}catch(Exception e){throw new ResponseStatusException(HttpStatus.UNAUTHORIZED);}}
     private static ResponseStatusException bad(String m){return new ResponseStatusException(HttpStatus.BAD_REQUEST,m);} private static String safeMessage(Exception e){String m=e.getMessage();return m==null||m.isBlank()?"Food analysis failed":m;}
-    private record FoodMatch(UUID id,BigDecimal calories,BigDecimal protein,BigDecimal carbs,BigDecimal fat,BigDecimal fiber,BigDecimal sugar,BigDecimal sodium,BigDecimal servingSize){}
+    private record FoodMatch(UUID id,FoodNutrition nutrition) {}
     private static class TimestampHolder{final Instant value;TimestampHolder(java.sql.Timestamp t){value=t.toInstant();}}
     public record ItemView(UUID id,UUID foodId,String name,BigDecimal grams,BigDecimal confidence,BigDecimal calories,BigDecimal proteinG,BigDecimal carbsG,BigDecimal fatG,BigDecimal fiberG,BigDecimal sugarG,BigDecimal sodiumMg,boolean userEdited){}
     public record ScanView(UUID id,String status,String model,UUID mealId,String error,Instant createdAt,List<ItemView> items,BigDecimal totalCalories,BigDecimal totalProteinG,BigDecimal totalCarbsG,BigDecimal totalFatG){}

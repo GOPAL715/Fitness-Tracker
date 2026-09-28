@@ -1,6 +1,9 @@
 package com.fittrack.app;
 
 import com.fittrack.app.CompositeDtos.*;
+import com.fittrack.nutrition.NutritionCalculator;
+import com.fittrack.nutrition.NutritionCalculator.FoodNutrition;
+import com.fittrack.nutrition.NutritionCalculator.Portion;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -12,7 +15,11 @@ import java.util.stream.Collectors;
 @Service
 public class CompositeService {
     private final JdbcTemplate jdbc;
-    public CompositeService(JdbcTemplate jdbc) { this.jdbc = jdbc; }
+    private final NutritionCalculator nutrition;
+    public CompositeService(JdbcTemplate jdbc, NutritionCalculator nutrition) {
+        this.jdbc = jdbc;
+        this.nutrition = nutrition;
+    }
 
     @Transactional
     public CompositeResponse completeSession(WorkoutSessionCompleteRequest request, String userId) {
@@ -95,17 +102,31 @@ public class CompositeService {
     @Transactional
     public CompositeResponse completeMeal(MealCompleteRequest request, String userId) {
         UUID user=owner(userId); UUID meal=UUID.randomUUID(); var m=request.meal();
-        BigDecimal[] totals={BigDecimal.ZERO,BigDecimal.ZERO,BigDecimal.ZERO,BigDecimal.ZERO,BigDecimal.ZERO};
+        // Totals are derived here and never read from the request: the client sends foods and
+        // portion weights, and NutritionCalculator is the single place the per-100g basis lives.
+        NutritionCalculator.Portion total = NutritionCalculator.Portion.zero();
         var rows=new ArrayList<Map<String,Object>>();
-        for(MealItemData i:request.items()){var food=food(i.foodId());BigDecimal grams=i.grams();BigDecimal[] n=nutrition(food,grams);for(int x=0;x<5;x++)totals[x]=totals[x].add(n[x]);rows.add(row("id", UUID.randomUUID(), "food_id", i.foodId(), "food_name", food.get("name"), "quantity", i.quantity(), "grams", grams, "calories", n[0], "protein_g", n[1], "carbs_g", n[2], "fat_g", n[3], "fiber_g", n[4], "source", m.source()==null?"manual":m.source()));}
-        jdbc.update("INSERT INTO meals(id,user_id,meal_date,meal_type,name,source,calories,protein_g,carbs_g,fat_g,fiber_g) VALUES (?,?::uuid,?,?,?,?,?,?,?,?,?)",meal,user,m.mealDate(),m.mealType(),m.name(),m.source()==null?"manual":m.source(),totals[0],totals[1],totals[2],totals[3],totals[4]);
+        for(MealItemData i:request.items()){
+            Map<String,Object> food=food(i.foodId());
+            BigDecimal grams=i.grams();
+            NutritionCalculator.Portion p=NutritionCalculator.forGrams(
+                    new FoodNutrition(num(food.get("calories")),num(food.get("protein_g")),num(food.get("carbs_g")),
+                            num(food.get("fat_g")),num(food.get("fiber_g")),num(food.get("sugar_g")),num(food.get("sodium_mg"))),grams);
+            total=NutritionCalculator.add(total,p);
+            rows.add(row("id", UUID.randomUUID(), "food_id", i.foodId(), "food_name", food.get("name"),
+                    "quantity", i.quantity(), "grams", grams, "calories", p.calories(), "protein_g", p.proteinG(),
+                    "carbs_g", p.carbsG(), "fat_g", p.fatG(), "fiber_g", p.fiberG(),
+                    "source", m.source()==null?"manual":m.source()));
+        }
+        jdbc.update("INSERT INTO meals(id,user_id,meal_date,meal_type,name,source,calories,protein_g,carbs_g,fat_g,fiber_g) VALUES (?,?::uuid,?,?,?,?,?,?,?,?,?)",meal,user,m.mealDate(),m.mealType(),m.name(),m.source()==null?"manual":m.source(),total.calories(),total.proteinG(),total.carbsG(),total.fatG(),total.fiberG());
         for(var r:rows)jdbc.update("INSERT INTO meal_items(id,meal_id,food_id,food_name,quantity,grams,calories,protein_g,carbs_g,fat_g,fiber_g,source) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",r.get("id"),meal,r.get("food_id"),r.get("food_name"),r.get("quantity"),r.get("grams"),r.get("calories"),r.get("protein_g"),r.get("carbs_g"),r.get("fat_g"),r.get("fiber_g"),r.get("source"));
         return new CompositeResponse(meal,"meal",rows.size());
     }
 
     private Map<String,Object> row(Object... values){Map<String,Object> row=new LinkedHashMap<>();for(int i=0;i<values.length;i+=2)row.put(values[i].toString(),values[i+1]);return row;}
     private void requireCatalog(String table,UUID id){Integer n=jdbc.queryForObject("SELECT count(*) FROM "+table+" WHERE id=?",Integer.class,id);if(n==null||n==0)throw new NoSuchElementException("Catalog reference not found");}
-    private Map<String,Object> food(UUID id){return jdbc.queryForList("SELECT id,name,serving_size,calories,protein_g,carbs_g,fat_g,fiber_g FROM foods WHERE id=?",id).stream().findFirst().orElseThrow(()->new NoSuchElementException("Food not found"));}
-    private BigDecimal[] nutrition(Map<String,Object> f,BigDecimal grams){BigDecimal serving=num(f.get("serving_size"));return new BigDecimal[]{scale(grams.multiply(num(f.get("calories"))).divide(serving,6,java.math.RoundingMode.HALF_UP)),scale(grams.multiply(num(f.get("protein_g"))).divide(serving,6,java.math.RoundingMode.HALF_UP)),scale(grams.multiply(num(f.get("carbs_g"))).divide(serving,6,java.math.RoundingMode.HALF_UP)),scale(grams.multiply(num(f.get("fat_g"))).divide(serving,6,java.math.RoundingMode.HALF_UP)),scale(grams.multiply(num(f.get("fiber_g"))).divide(serving,6,java.math.RoundingMode.HALF_UP))};}
+    // Reads every per-100g macro the canonical calculation needs. serving_size is deliberately not
+    // selected: it is display metadata, and reading it here is what invited it to become a divisor.
+    private Map<String,Object> food(UUID id){return jdbc.queryForList("SELECT id,name,calories,protein_g,carbs_g,fat_g,fiber_g,sugar_g,sodium_mg FROM foods WHERE id=?",id).stream().findFirst().orElseThrow(()->new NoSuchElementException("Food not found"));}
     private BigDecimal num(Object v){return v==null?BigDecimal.ZERO:new BigDecimal(v.toString());} private BigDecimal scale(BigDecimal v){return v.setScale(2,java.math.RoundingMode.HALF_UP);} private UUID owner(String s){try{return UUID.fromString(s);}catch(Exception e){throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.UNAUTHORIZED);}}
 }

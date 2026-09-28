@@ -38,9 +38,11 @@ class BackupRestoreAcceptanceTest extends AbstractAcceptanceTest {
 
         assertThat(applied).as("every migration was applied").isNotEmpty();
         assertThat(applied).allSatisfy(row -> assertThat(row.get("success")).isEqualTo(true));
-        // A gap would mean a migration never ran, so the chain must be contiguous.
+        // A gap would mean a migration never ran, so the chain must be contiguous. Phase 8 adds V8
+        // for the nutrition indexes and the sargable food-name lookup, and V9 for the seeded
+        // USDA SR Legacy food catalog.
         assertThat(applied).extracting(row -> String.valueOf(row.get("version")))
-                .containsExactly("1", "2", "3", "4", "5", "6", "7");
+                .containsExactly("1", "2", "3", "4", "5", "6", "7", "8", "9");
     }
 
     /**

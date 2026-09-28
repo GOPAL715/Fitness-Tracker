@@ -82,10 +82,35 @@ photo-derived nutrition is exact.
 
 ## Mixed and Indian dishes
 
-The prompt explicitly requests component-level identification for mixed plates —
-rice, dal, sambar, curd, papad, biryani, raita and similar. Each component
-becomes its own editable line item, and the seeded `foods` table includes South
-Asian staples so components usually resolve to real nutrition rows.
+The prompt explicitly requests component-level identification for mixed plates.
+Each component becomes its own editable line item, and a component that matches
+a catalog row resolves to real nutrition data.
+
+The seeded `foods` catalog comes from USDA FoodData Central SR Legacy. That
+source is US-centric, so coverage of Indian components is **partial**. Being
+accurate about which components resolve matters, because an unmatched component
+is left uncorrected and the user must pick a food by hand.
+
+Available in the catalog today, and expected to match:
+
+- rice, wheat flour, oat bran, whole-wheat bread
+- lentils (raw, and cooked with or without salt)
+- chickpeas / garbanzo / bengal gram, and chickpea flour (besan)
+- chapati / roti and naan
+- clarified butter (ghee), turmeric, mustard seed, mustard greens
+- egg, milk, yoghurt, tofu, and the usual vegetables, fruits and nuts
+
+**Not available in this source, and not invented:** paneer, curd / dahi, idli,
+dosa, sambar, raita, papad, biryani, rajma, toor dal, moong dal, masoor dal and
+urad dal. SR Legacy has no entries for these, so a detection naming one will not
+resolve to a catalog row. The user corrects it by choosing a substitute from
+the catalog, and the substituted food's nutrition is what gets recorded.
+
+These gaps are a known limitation, not a defect to be papered over with
+approximate values. They are tracked as candidates for a future catalog
+extension from a source that actually covers Indian foods; see
+[food-catalog.md](food-catalog.md) for provenance, the full component
+availability list, and the licensing basis.
 
 ## Integration with the rest of the app
 

@@ -7,6 +7,9 @@ dist/
 # Java/Maven build output
 **/target/
 
+# Generator output (regenerate with scripts/food-catalog/generator.cjs)
+scripts/food-catalog/out/
+
 # IDE
 .idea/
 .vscode/

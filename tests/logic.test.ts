@@ -90,7 +90,9 @@ describe("calculateNutrition", () => {
   it("scales fractional portions correctly", () => {
     const n = calculateNutrition(rice, 50);
     expect(n.calories).toBe(65);
-    expect(n.protein_g).toBe(1.4);
+    // 2.7 g per 100 g over 50 g is 1.35, kept at the two-decimal scale the server persists so a
+    // browser preview and the stored meal are the same number rather than each rounding its own way.
+    expect(n.protein_g).toBe(1.35);
   });
 });
 

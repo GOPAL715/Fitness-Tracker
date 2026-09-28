@@ -9,7 +9,7 @@ import type { Food, MealItem } from "../lib/types";
 import { macroTotals } from "../lib/insights";
 import { calculateNutrition, sumNutrition } from "../lib/nutrition";
 import { Modal, EmptyState, SectionHeader, ProgressRing } from "../components/ui";
-import { todayISO, formatDate, round } from "../lib/utils";
+import { todayISO, dateOffset, formatDate, round } from "../lib/utils";
 import FoodScannerModal from "./FoodScannerModal";
 
 type Props = {
@@ -119,45 +119,42 @@ export default function NutritionView({ meals, mealItems, foods, profile, todayM
   }
 
   async function deleteMeal(id: string) {
-    await apiData.from("meals").delete().eq("id", id);
+    // The adapter reports a failure through { error } rather than throwing, so the result has to
+    // be inspected. Refreshing on a rejected delete made the meal look removed until the next
+    // reload, and silently discarded the error.
+    const { error } = await apiData.from("meals").delete().eq("id", id);
+    if (error) {
+      setError("That meal could not be deleted. Please try again.");
+      return;
+    }
+    setError(null);
     onRefresh();
   }
 
+  /**
+   * Re-logs a past meal for today through the canonical endpoint.
+   *
+   * <p>This used to copy the row with its stored macros and then copy each item, in two separate
+   * requests. The server no longer accepts nutrition totals from a client, so the foods and portion
+   * weights are resent and the totals are derived again, which also means a food whose catalog entry
+   * has changed since is now costed at today's values.
+   */
   async function repeatMeal(m: Meal) {
-    const items = itemsForMeal(m.id);
-    const { data: created } = await apiData
-      .from("meals")
-      .insert({
-        meal_date: today,
-        meal_type: m.meal_type,
-        name: m.name,
-        calories: m.calories,
-        protein_g: m.protein_g,
-        carbs_g: m.carbs_g,
-        fat_g: m.fat_g,
-        fiber_g: m.fiber_g,
-        source: m.source,
-      })
-      .select("id")
-      .maybeSingle();
-    if (created && items.length) {
-      await apiData.from("meal_items").insert(
-        items.map((i) => ({
-          meal_id: created.id,
-          food_id: i.food_id,
-          food_name: i.food_name,
-          quantity: i.quantity,
-          grams: i.grams,
-          calories: i.calories,
-          protein_g: i.protein_g,
-          carbs_g: i.carbs_g,
-          fat_g: i.fat_g,
-          fiber_g: i.fiber_g,
-          source: i.source,
-        }))
-      );
+    const items = itemsForMeal(m.id).filter((i) => i.food_id);
+    if (items.length === 0) {
+      setError("That meal has no foods on record, so it cannot be repeated.");
+      return;
     }
-    onRefresh();
+    setError(null);
+    try {
+      await completeMeal({
+        meal: { meal_date: today, meal_type: m.meal_type, name: m.name, source: m.source },
+        items: items.map((i) => ({ food_id: i.food_id, grams: Number(i.grams), quantity: Number(i.quantity ?? 1) })),
+      });
+      onRefresh();
+    } catch {
+      setError("That meal could not be repeated. Please try again.");
+    }
   }
 
   const recentMeals = useMemo(() => {
@@ -384,6 +381,7 @@ export default function NutritionView({ meals, mealItems, foods, profile, todayM
                 <div><span className="stat-meta">Protein</span><strong>{round(draftTotals.protein_g, 1)}g</strong></div>
                 <div><span className="stat-meta">Carbs</span><strong>{round(draftTotals.carbs_g, 1)}g</strong></div>
                 <div><span className="stat-meta">Fat</span><strong>{round(draftTotals.fat_g, 1)}g</strong></div>
+                <div><span className="stat-meta">Fiber</span><strong>{round(draftTotals.fiber_g, 1)}g</strong></div>
               </div>
             )}
 
@@ -456,9 +454,10 @@ function MacroCard({
 }
 
 function offsetDays(days: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() - days);
-  return d.toISOString().split("T")[0];
+  // Walks the offset in local time and formats it locally, sharing the basis todayISO uses.
+  // toISOString() converts to UTC first, so for anyone east of UTC the early hours of the morning
+  // would count as the previous day and the week window would start a day early.
+  return dateOffset(days);
 }
 
 
