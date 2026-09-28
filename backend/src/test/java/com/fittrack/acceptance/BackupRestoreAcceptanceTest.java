@@ -40,9 +40,10 @@ class BackupRestoreAcceptanceTest extends AbstractAcceptanceTest {
         assertThat(applied).allSatisfy(row -> assertThat(row.get("success")).isEqualTo(true));
         // A gap would mean a migration never ran, so the chain must be contiguous. Phase 8 adds V8
         // for the nutrition indexes and the sargable food-name lookup, and V9 for the seeded
-        // USDA SR Legacy food catalog.
+    // USDA SR Legacy food catalog. Phase 10 adds V10 for source-aware health storage: the
+    // device_id columns, the manual-only uniqueness indexes, and the canonical views.
         assertThat(applied).extracting(row -> String.valueOf(row.get("version")))
-                .containsExactly("1", "2", "3", "4", "5", "6", "7", "8", "9");
+        .containsExactly("1", "2", "3", "4", "5", "6", "7", "8", "9", "10");
     }
 
     /**
@@ -133,8 +134,11 @@ class BackupRestoreAcceptanceTest extends AbstractAcceptanceTest {
         List<String> statements = new ArrayList<>();
         File[] files = MIGRATIONS.listFiles((dir, name) -> name.endsWith(".sql"));
         assertThat(files).as("migration scripts are present").isNotNull();
+        // Ordered numerically, not as text. A string sort puts "V10" between "V1" and "V2", so a
+        // tenth migration would be replayed before the ninth and could reference a column that does
+        // not exist yet. Flyway itself orders by version, and this replay must match it.
         Arrays.stream(files)
-                .sorted(Comparator.comparing(f -> f.getName().split("__")[0]))
+                .sorted(Comparator.comparingInt(f -> Integer.parseInt(f.getName().split("__")[0].substring(1))))
                 .forEach(file -> {
                     try {
                         for (String raw : Files.readString(file.toPath()).split(";\\s*\\R")) {

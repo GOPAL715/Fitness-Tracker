@@ -29,6 +29,11 @@ import { relativeTime } from "../lib/utils";
 import { useAuth } from "../lib/auth";
 import { apiData } from "../lib/api/dataAdapter";
 import { HEALTH_PROVIDERS, statusLabel, statusTone } from "../lib/healthProviders";
+import {
+  syncHealthDevice, deleteHealthDevice, healthErrorMessage,
+  DISCONNECT_RETENTION_NOTICE, syncStateLabel,
+  type HealthDevice as HealthDeviceResponse,
+} from "../lib/api/healthApi";
 
 type Props = {
   profile: Profile | null;
@@ -163,39 +168,47 @@ export default function ProfileView({ profile, devices, notifications, onRefresh
 
   const [deviceError, setDeviceError] = useState<string | null>(null);
 
-  async function toggleDevice(d: HealthDevice) {
-    const nextStatus = d.status === "Connected" ? "Disconnected" : "Connected";
+  /**
+   * Runs a real sync through the server.
+   *
+   * The previous handler wrote a timestamp directly, so the button looked like it worked while no
+   * provider was ever contacted. It now calls the sync endpoint and reports what happened,
+   * including a partial import.
+   */
+  async function syncDevice(d: HealthDevice) {
     setSyncing(d.id);
     setDeviceError(null);
     try {
-      const { error } = await apiData
-        .from("health_devices")
-        .update({ status: nextStatus, last_sync: new Date().toISOString() })
-        .eq("id", d.id);
-      if (error) {
-        setDeviceError("That device could not be updated. Please try again.");
-        return;
+      const result = await syncHealthDevice(d.id);
+      if (result.records_rejected > 0) {
+        setDeviceError(
+          `Sync finished with ${result.records_rejected} record(s) rejected as invalid. Imported data is unaffected.`,
+        );
+      } else if (result.truncated) {
+        setDeviceError("This device had more data than one sync can fetch. Run sync again to continue.");
       }
       onRefresh();
+    } catch (err) {
+      setDeviceError(healthErrorMessage(err, "sync"));
     } finally {
       // finally, not a trailing statement: a thrown error must not leave the button disabled.
       setSyncing(null);
     }
   }
 
-  async function syncDevice(d: HealthDevice) {
+  /**
+   * Disconnects the connection and stops future syncing.
+   *
+   * Imported history is kept, so the UI says so rather than implying the data was deleted.
+   */
+  async function disconnectDevice(d: HealthDevice) {
     setSyncing(d.id);
     setDeviceError(null);
     try {
-      const { error } = await apiData
-        .from("health_devices")
-        .update({ last_sync: new Date().toISOString() })
-        .eq("id", d.id);
-      if (error) {
-        setDeviceError("That device could not be synced. Please try again.");
-        return;
-      }
+      await deleteHealthDevice(d.id);
       onRefresh();
+    } catch (err) {
+      setDeviceError(healthErrorMessage(err, "disconnect"));
     } finally {
       setSyncing(null);
     }
@@ -360,9 +373,16 @@ export default function ProfileView({ profile, devices, notifications, onRefresh
                   <div className="workout-title">{d.device_name}</div>
                   <div className="workout-meta">
                     <span>{d.device_type}</span>
-                    <span>Synced {relativeTime(d.last_sync)}</span>
-                    <span className={`badge ${d.status === "Connected" ? "badge-done" : "badge-pending"}`}>{d.status}</span>
+                    <span>{d.last_sync_at ? `Last sync ${relativeTime(d.last_sync_at)}` : "Never synced"}</span>
+                    <span className="badge" style={{ background: `${syncStateLabel(d).tone}22`, color: syncStateLabel(d).tone }}>
+                      {syncStateLabel(d).label}
+                    </span>
                   </div>
+                  {d.last_error && (
+                    <p className="stat-meta" role="status">
+                      Last sync could not complete ({d.last_error.replace(/_/g, " ")}).
+                    </p>
+                  )}
                 </div>
                 <div style={{ display: "flex", gap: 8 }}>
                   {d.status === "Connected" && (
@@ -370,13 +390,21 @@ export default function ProfileView({ profile, devices, notifications, onRefresh
                       <RefreshCw size={14} /> {syncing === d.id ? "Syncing" : "Sync"}
                     </button>
                   )}
-                  <button className="btn btn-secondary btn-sm" onClick={() => toggleDevice(d)} disabled={syncing === d.id}>
-                    {d.status === "Connected" ? "Disconnect" : "Connect"}
+                  <button
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => disconnectDevice(d)}
+                    disabled={syncing === d.id}
+                    title={DISCONNECT_RETENTION_NOTICE}
+                  >
+                    Disconnect
                   </button>
                 </div>
               </div>
             ))
           )}
+          <p className="stat-meta" style={{ marginTop: 12 }}>
+            {DISCONNECT_RETENTION_NOTICE}
+          </p>
         </div>
       </div>
 

@@ -115,13 +115,13 @@ public class CoachContextService {
         return one("SELECT COALESCE(sum(steps),0) steps, COALESCE(avg(sleep_hours),0) avg_sleep_hours,"
                 + " COALESCE(sum(active_minutes),0) active_minutes,"
                 + " COALESCE(avg(resting_heart_rate),0) avg_resting_hr, COALESCE(avg(hrv),0) avg_hrv,"
-                + " count(*) days_logged FROM daily_metrics"
+                + " count(*) days_logged FROM v_daily_metrics_canonical"
                 + " WHERE user_id=? AND metric_date BETWEEN ? AND ?", p, from, to);
     }
 
     private Map<String, Object> recovery(UUID p, LocalDate from, LocalDate to) {
         return one("SELECT COALESCE(avg(readiness),0) avg_readiness, COALESCE(avg(stress_level),0) avg_stress,"
-                + " COALESCE(sum(water_oz),0) water_oz FROM daily_metrics"
+                + " COALESCE(sum(water_oz),0) water_oz FROM v_daily_metrics_canonical"
                 + " WHERE user_id=? AND metric_date BETWEEN ? AND ?", p, from, to);
     }
 
@@ -170,13 +170,13 @@ public class CoachContextService {
      */
     private Map<String, Object> bodyTrend(UUID p, LocalDate from, LocalDate to) {
         Map<String, Object> m = one("SELECT count(*) readings,"
-                + " (SELECT weight_lb FROM body_metrics WHERE user_id=? AND metric_date BETWEEN ? AND ?"
+                + " (SELECT weight_lb FROM v_body_metrics_canonical WHERE user_id=? AND metric_date BETWEEN ? AND ?"
                 + "  AND weight_lb IS NOT NULL ORDER BY metric_date ASC LIMIT 1) first_weight_lb,"
-                + " (SELECT weight_lb FROM body_metrics WHERE user_id=? AND metric_date BETWEEN ? AND ?"
+                + " (SELECT weight_lb FROM v_body_metrics_canonical WHERE user_id=? AND metric_date BETWEEN ? AND ?"
                 + "  AND weight_lb IS NOT NULL ORDER BY metric_date DESC LIMIT 1) last_weight_lb,"
-                + " (SELECT body_fat_pct FROM body_metrics WHERE user_id=? AND metric_date BETWEEN ? AND ?"
+                + " (SELECT body_fat_pct FROM v_body_metrics_canonical WHERE user_id=? AND metric_date BETWEEN ? AND ?"
                 + "  AND body_fat_pct IS NOT NULL ORDER BY metric_date DESC LIMIT 1) latest_body_fat_pct"
-                + " FROM body_metrics WHERE user_id=? AND metric_date BETWEEN ? AND ?",
+                + " FROM v_body_metrics_canonical WHERE user_id=? AND metric_date BETWEEN ? AND ?",
                 p, from, to, p, from, to, p, from, to, p, from, to);
         if (m.isEmpty()) return Map.of("readings", 0);
         Object first = m.get("first_weight_lb");

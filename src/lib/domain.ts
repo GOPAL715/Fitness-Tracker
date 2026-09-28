@@ -20,6 +20,14 @@ export type Profile = {
 export type DailyMetric = {
   id: string;
   metric_date: string;
+  /*
+   * NOTE: the API returns null for a field that was never measured, and 0 for a measured zero.
+   * These are declared as plain numbers because the app's existing charts, stat tiles and insights
+   * all read them as numbers, and changing that contract means deciding how every view renders
+   * missing data. Until that work is done deliberately, a null arriving here is a real gap in the
+   * view layer rather than a type error. See MeasuredDailyMetric below and the null-safe
+   * aggregation helpers in healthProviders.ts for code that must distinguish the two.
+   */
   steps: number;
   sleep_hours: number;
   calories_burned: number;
@@ -29,6 +37,26 @@ export type DailyMetric = {
   hrv: number;
   active_minutes: number;
   stress_level: number;
+};
+
+/**
+ * A daily metric that distinguishes "not measured" from "measured zero".
+ *
+ * This is the shape provider data actually has, and the one any health merge or aggregate must use.
+ * Merging into MeasuredDailyMetric keeps a missing value missing instead of inventing a zero.
+ */
+export type MeasuredDailyMetric = {
+  id: string;
+  metric_date: string;
+  steps: number | null;
+  sleep_hours: number | null;
+  calories_burned: number | null;
+  water_oz: number | null;
+  resting_heart_rate: number | null;
+  readiness: number | null;
+  hrv: number | null;
+  active_minutes: number | null;
+  stress_level: number | null;
 };
 
 export type Workout = {
@@ -93,10 +121,15 @@ export type PlanSession = {
 
 export type HealthDevice = {
   id: string;
+  provider: string | null;
+  external_device_id: string | null;
   device_name: string;
   device_type: string;
   status: string;
-  last_sync: string;
+  sync_status: string;
+  last_error: string | null;
+  last_sync_at: string | null;
+  awaiting_first_sync: boolean;
 };
 
 export type CoachNotification = {

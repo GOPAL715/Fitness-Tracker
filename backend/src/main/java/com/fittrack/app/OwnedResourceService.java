@@ -23,11 +23,35 @@ public class OwnedResourceService {
     }
 
     private enum Scope { USER, CATALOG, SERVER_OWNED, WORKOUT_EXERCISE, EXERCISE_SET, TEMPLATE_EXERCISE, MEAL_ITEM, SCAN_ITEM, HABIT_LOG }
-    private record Spec(String table, Scope scope, Set<String> columns, boolean singleton) { Spec { columns = Set.copyOf(columns); } }
+    /**
+     * A resource definition.
+     *
+     * <p>{@code readSource} is the relation reads use. It differs from {@code table} only for the two
+     * health metrics, which read through a canonical view so a day holding both a manual and a
+     * provider row still yields one row. Writes always use {@code table}, because a view cannot
+     * receive an INSERT.
+     */
+    private record Spec(String table, Scope scope, Set<String> columns, boolean singleton,
+                        String readSource) {
+        Spec(String table, Scope scope, Set<String> columns, boolean singleton) {
+            this(table, scope, columns, singleton, table);
+        }
+        Spec { columns = Set.copyOf(columns); }
+    }
     private static final String USER_ID = "user_id";
     private static final String ID = "id";
     private static Set<String> columns(String value) { return Set.of(value.split(",")); }
     private static Spec owned(String table, String cols) { return new Spec(table, Scope.USER, columns(cols), false); }
+    /**
+     * A user-owned resource that reads through a canonical view and writes to its base table.
+     *
+     * <p>Used for the health metrics so the app shows one value per day while a manual edit still
+     * lands on the manual row rather than on device-imported data.
+     */
+    private static Spec canonicalView(String view, String table, String cols) {
+        return new Spec(table, Scope.USER, columns(cols), false, view);
+    }
+
     private static Spec catalog(String table, String cols) { return new Spec(table, Scope.CATALOG, columns(cols), false); }
     private static Spec child(String table, Scope scope, String cols) { return new Spec(table, scope, columns(cols), false); }
     /** Readable and deletable through the generic API, but never writable. */
@@ -119,8 +143,8 @@ public class OwnedResourceService {
 
     private static final Map<String, Spec> SPECS = Map.ofEntries(
         Map.entry("profile", profile()), Map.entry("fitness-profile", profile()),
-        Map.entry("daily-metrics", owned("daily_metrics", "metric_date,steps,sleep_hours,calories_burned,water_oz,resting_heart_rate,readiness,hrv,active_minutes,stress_level")),
-        Map.entry("body-metrics", owned("body_metrics", "metric_date,weight_lb,body_fat_pct,waist_in,chest_in,arm_in,thigh_in")),
+        Map.entry("daily-metrics", canonicalView("v_daily_metrics_canonical", "daily_metrics", "metric_date,steps,sleep_hours,calories_burned,water_oz,resting_heart_rate,readiness,hrv,active_minutes,stress_level")),
+        Map.entry("body-metrics", canonicalView("v_body_metrics_canonical", "body_metrics", "metric_date,weight_lb,body_fat_pct,waist_in,chest_in,arm_in,thigh_in")),
         Map.entry("workouts", owned("workouts", "title,workout_type,duration_minutes,calories_burned,intensity,workout_date,completed,notes,perceived_effort,distance_miles")),
         Map.entry("workout-sessions", owned("workout_sessions", "title,workout_type,started_at,completed_at,duration_minutes,notes,perceived_effort,completed")),
         Map.entry("workout-templates", owned("workout_templates", "name,description,workout_type,estimated_minutes,is_favorite")),
@@ -166,7 +190,7 @@ public class OwnedResourceService {
             params.addValue("uid", uuid(user, "user id"));
             predicate = childJoin(spec.scope()) + "t.id=t.id";
         }
-        return jdbc.queryForList("SELECT t.* FROM " + spec.table() + " t" + predicate + " ORDER BY t.id DESC LIMIT " + MAX_PAGE, params)
+        return jdbc.queryForList("SELECT t.* FROM " + spec.readSource() + " t" + predicate + " ORDER BY t.id DESC LIMIT " + MAX_PAGE, params)
                 .stream().map(row -> listColumns(spec, row)).toList();
     }
 
@@ -186,7 +210,7 @@ public class OwnedResourceService {
             params.addValue("uid", uuid(user, "user id"));
             predicate = childJoin(spec.scope()) + "t.id=:id";
         }
-        return jdbc.queryForList("SELECT t.* FROM " + spec.table() + " t" + predicate + " LIMIT " + MAX_PAGE, params)
+        return jdbc.queryForList("SELECT t.* FROM " + spec.readSource() + " t" + predicate + " LIMIT " + MAX_PAGE, params)
             .stream().findFirst().map(row -> listColumns(spec, row))
             .orElseThrow(() -> new NoSuchElementException("Resource not found"));
     }
@@ -340,7 +364,8 @@ public class OwnedResourceService {
         // The driver hands back java.sql.Date for a date column, so the comparison is done in SQL
         // rather than in Java; comparing a java.sql.Date to a LocalDate would never match.
         List<Map<String, Object>> rows = jdbc.queryForList(
-                "SELECT * FROM " + spec.table() + " WHERE " + USER_ID + "=:uid AND metric_date=CAST(:d AS date) LIMIT 1",
+                "SELECT * FROM " + spec.table() + " WHERE " + USER_ID + "=:uid AND metric_date=CAST(:d AS date)"
+        + " AND provider_record_id IS NULL LIMIT 1",
                 new MapSqlParameterSource("uid", user).addValue("d", metricDate));
         return rows.isEmpty() ? null : rows.get(0);
     }
@@ -410,10 +435,11 @@ public class OwnedResourceService {
         if (spec.singleton() && spec.scope() == Scope.USER && existingForUser(spec, user) != null) {
             throw new IllegalArgumentException(resource + " already exists for this account");
         }
-        // A body metric is one row per user per day, so a second measurement for the same day is an
-        // update of that row rather than a conflict. Resolving it here keeps the unique constraint
-        // intact without the client needing a row id it does not have.
-        if ("body_metrics".equals(spec.table())) {
+        // A daily or body metric is one manual row per user per day, so a second measurement for
+        // the same day is an update of that row rather than a conflict. Resolving it here keeps the
+        // unique constraint intact without the client needing a row id it does not have, and keeps
+        // a hand-entered edit away from any device-imported row for the same day.
+        if ("body_metrics".equals(spec.table()) || "daily_metrics".equals(spec.table())) {
             Map<String, Object> existing = existingForDate(spec, uuid(user, "user id"), values.get("metric_date"));
             if (existing != null) {
                 // Only the writable columns are carried forward; the stored row also holds columns

@@ -29,12 +29,28 @@ public class AppDataService {
         Map.entry("coach_notifications","notifications"), Map.entry("body_metrics","body")
     );
 
+    /**
+     * Read source for tables whose projection must collapse multiple source rows.
+     *
+     * <p>Phase 10 lets a day hold a manual row and one row per connected device. Everything the app
+     * reads has to see one value per day, so the two metric tables are read through their canonical
+     * views here. Without this the app data payload returns two rows for a single date and the UI
+     * renders the day twice.
+     */
+    private static String readSource(String table) {
+        return switch (table) {
+            case "daily_metrics" -> "v_daily_metrics_canonical";
+            case "body_metrics" -> "v_body_metrics_canonical";
+            default -> table;
+        };
+    }
+
     @Transactional(readOnly = true)
     public Map<String,Object> load(String userId) {
         if (userId == null || userId.isBlank()) throw new IllegalArgumentException("Authenticated user is required");
         Map<String,Object> result = new LinkedHashMap<>();
         for (String table : USER_TABLES) {
-            String sql = "SELECT * FROM " + table + " WHERE user_id = CAST(? AS uuid)";
+            String sql = "SELECT * FROM " + readSource(table) + " WHERE user_id = CAST(? AS uuid)";
             List<Map<String,Object>> rows = jdbc.queryForList(sql, userId);
             if ("fitness_profile".equals(table)) result.put("profile", rows.isEmpty() ? null : rows.get(0));
             else result.put(NAMES.get(table), rows);

@@ -11,6 +11,9 @@ export async function updateDevice(id: string, patch: Partial<HealthDevice>) { r
 export async function markNotificationRead(id: string) { return apiClient<CoachNotification>(`/coach-notifications/${id}/read`, { method: "POST" }); }
 export async function analyzeCoach() { return apiClient<any>("/coach/analyze", { method: "POST", ...json({}) }); }
 export async function addWater(todayMetric: DailyMetric | null, oz: number) {
-  return apiClient("/water", { method: "POST", ...json(todayMetric ? { id: todayMetric.id, amount: oz, water_oz: todayMetric.water_oz + oz } : { amount: oz, oz }) });
+  // water_oz is null when nothing was recorded, and null is not zero: the server accumulates
+  // onto whatever is stored, so sending a locally summed total would double-count. Only the amount
+  // is sent, and the response reports the authoritative total.
+  return apiClient("/water", { method: "POST", ...json({ amount: oz, oz }) });
 }
 export async function saveBodyMetric(payload: unknown) { return apiClient("/body-metrics", { method: "POST", ...json(payload) }); }

@@ -1,4 +1,4 @@
-import type { DailyMetric } from "./domain";
+import type { MeasuredDailyMetric } from "./domain";
 import { round } from "./utils";
 
 /**
@@ -192,12 +192,21 @@ export function statusTone(status: HealthProviderStatus): string {
 }
 
 /**
- * Merges normalised provider days into the existing daily metrics rows.
- * Only non-null values overwrite an existing day so a partial sync never wipes
- * data that is already recorded, and days with no existing row are appended.
+ * Merges normalised provider days into existing daily metrics rows.
+ *
+ * Only non-null values overwrite an existing day, so a partial sync never wipes data that is
+ * already recorded, and days with no existing row are appended.
+ *
+ * NULL is preserved, never coerced to 0. The previous version defaulted every absent field to 0,
+ * which turned "this provider reported no heart rate" into "the user's resting heart rate is 0" -
+ * a fabricated measurement that would flow into analytics and into the AI Coach. Here a null stays
+ * null, and an actual measured 0 stays 0, because the two are different facts.
  */
-export function mergeHealthDays(existing: DailyMetric[], incoming: NormalisedHealthDay[]): DailyMetric[] {
-  const byDate = new Map(existing.map((m) => [m.metric_date, { ...m }]));
+export function mergeHealthDays(
+  existing: MeasuredDailyMetric[],
+  incoming: NormalisedHealthDay[],
+): MeasuredDailyMetric[] {
+  const byDate = new Map<string, MeasuredDailyMetric>(existing.map((m) => [m.metric_date, { ...m }]));
 
   for (const day of incoming) {
     const current = byDate.get(day.metric_date);
@@ -205,18 +214,20 @@ export function mergeHealthDays(existing: DailyMetric[], incoming: NormalisedHea
       byDate.set(day.metric_date, {
         id: `imported-${day.metric_date}`,
         metric_date: day.metric_date,
-        steps: day.steps ?? 0,
-        sleep_hours: day.sleep_hours ?? 0,
-        calories_burned: day.calories_burned ?? 0,
-        water_oz: 0,
-        resting_heart_rate: day.resting_heart_rate ?? 0,
-        readiness: 0,
-        hrv: day.hrv ?? 0,
-        active_minutes: day.active_minutes ?? 0,
-        stress_level: 0,
+        steps: day.steps,
+        sleep_hours: day.sleep_hours,
+        calories_burned: day.calories_burned,
+        water_oz: null,
+        resting_heart_rate: day.resting_heart_rate,
+        readiness: null,
+        hrv: day.hrv,
+        active_minutes: day.active_minutes,
+        stress_level: null,
       });
       continue;
     }
+    // Each assignment is guarded by a null check, so a field the provider did not report keeps
+    // whatever the user already had - and a reported zero, which is not null, is written.
     if (day.steps !== null) current.steps = day.steps;
     if (day.sleep_hours !== null) current.sleep_hours = round(day.sleep_hours, 1);
     if (day.resting_heart_rate !== null) current.resting_heart_rate = day.resting_heart_rate;
@@ -228,4 +239,34 @@ export function mergeHealthDays(existing: DailyMetric[], incoming: NormalisedHea
   return Array.from(byDate.values()).sort((a, b) => b.metric_date.localeCompare(a.metric_date));
 }
 
+/**
+ * Sums a measurement across days, ignoring days with no measurement.
+ *
+ * <p>Returns null when no day reported the measurement at all, which is the distinction that
+ * matters: a total of 0 and an absent total are different answers, and reporting 0 for "nothing was
+ * measured" would make an empty week look like a week of doing nothing.
+ */
+export function sumMeasured(values: (number | null | undefined)[]): number | null {
+  let total = 0;
+  let measured = false;
+  for (const value of values) {
+    if (value === null || value === undefined || !Number.isFinite(value)) continue;
+    total += value;
+    measured = true;
+  }
+  return measured ? total : null;
+}
 
+/** Averages a measurement, ignoring unmeasured days, or null when nothing was measured. */
+export function averageMeasured(values: (number | null | undefined)[]): number | null {
+  const present = values.filter(
+    (value): value is number => value !== null && value !== undefined && Number.isFinite(value),
+  );
+  if (present.length === 0) return null;
+  return present.reduce((a, b) => a + b, 0) / present.length;
+}
+
+/** A count of measured days, so a UI can say "3 of 7 days recorded" rather than implying 7. */
+export function measuredCount(values: (number | null | undefined)[]): number {
+  return values.filter((value) => value !== null && value !== undefined && Number.isFinite(value)).length;
+}

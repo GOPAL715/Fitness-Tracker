@@ -26,8 +26,8 @@ public class DailyMetricActionsController {
         if (amount <= 0 || amount > 1000) throw new IllegalArgumentException("Water amount must be between 1 and 1000 ounces");
         var user = java.util.UUID.fromString(userId);
         LocalDate today = LocalDate.now();
-        jdbc.update("INSERT INTO daily_metrics(id,user_id,metric_date,water_oz) VALUES (gen_random_uuid(),?::uuid,?,?) ON CONFLICT(user_id,metric_date) DO UPDATE SET water_oz = COALESCE(daily_metrics.water_oz,0) + EXCLUDED.water_oz", user, today, amount);
-        Integer total = jdbc.queryForObject("SELECT water_oz FROM daily_metrics WHERE user_id=?::uuid AND metric_date=?", Integer.class, user, today);
+        jdbc.update("INSERT INTO daily_metrics(id,user_id,metric_date,water_oz) VALUES (gen_random_uuid(),?::uuid,?,?) ON CONFLICT(user_id,metric_date) WHERE provider_record_id IS NULL DO UPDATE SET water_oz = COALESCE(daily_metrics.water_oz,0) + EXCLUDED.water_oz", user, today, amount);
+        Integer total = jdbc.queryForObject("SELECT water_oz FROM v_daily_metrics_canonical WHERE user_id=?::uuid AND metric_date=?", Integer.class, user, today);
         return Map.of("metric_date", today, "water_oz", total == null ? amount : total);
     }
     private static int firstPositive(Integer a, Integer b) { if (a != null && a > 0) return a; return b == null ? 0 : b; }

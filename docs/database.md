@@ -65,7 +65,7 @@ CHECK constraints.
 | `habit_logs` | daily check-ins, unique per habit per day |
 | `goals` | goal type, start/current/target values, unit, dates and status |
 | `reminders` | type, time, recurring days, quiet hours and enabled flag |
-| `health_devices` | connected device records with status and last sync |
+| `health_devices` | connected device records: `provider`, `external_device_id`, `sync_status`, `sync_cursor`, `last_error`, `last_sync`. `sync_cursor` is internal and is never returned by the API. |
 | `coach_notifications` | weekly coach reviews and messages |
 
 ## RLS patterns
@@ -161,3 +161,29 @@ Beyond primary keys and foreign keys:
 - No soft deletes; deletes are hard.
 - `ai_usage` records an estimated cost constant rather than reading provider
   billing data.
+
+## Health data sources
+
+`daily_metrics` and `body_metrics` may hold several rows for the same user and date: one manual row
+and one row per connected device. Three constraints keep that safe.
+
+| Column | Meaning |
+|---|---|
+| `source` | Which integration produced the row. A manual row has `provider_record_id = NULL`. |
+| `provider_record_id` | The provider's stable record id. Re-importing the same record updates the row in place. |
+| `device_id` | The originating connection. `NULL` on manual rows, and set to `NULL` by the foreign key when a device is disconnected. |
+
+**Uniqueness.** Manual rows are unique per user and date, enforced by the partial unique index
+`uq_daily_metrics_manual_date` / `uq_body_metrics_manual_date`. Provider rows are unique per
+`(user_id, source, provider_record_id)`, enforced by `uq_daily_metrics_provider_record` /
+`uq_body_metrics_provider_record`. Neither constrains the other, so a day can hold both.
+
+**Canonical reads.** `v_daily_metrics_canonical` and `v_body_metrics_canonical` return exactly one
+row per user and date, so every existing single-row-per-day reader keeps working. Selection is
+per field: `NULL` is skipped, an explicit provider priority is applied (manual ranks last), equal
+priorities are broken by `device_id` then `provider_record_id`, and competing values are never
+summed or averaged.
+
+**Retention on disconnect.** Deleting a `health_devices` row does not delete imported metrics. The
+foreign key is `ON DELETE SET NULL`, so the pointer is dropped and the history is kept. `source` and
+`provider_record_id` remain, so provenance is still readable.

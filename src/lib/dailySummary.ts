@@ -29,7 +29,9 @@ export function sessionsToday(workouts: Workout[], date = todayISO()): number {
 }
 
 export function sleepTrendLabel(metric: DailyMetric | null, target: number): string {
-  if (!metric) return "No sleep data yet";
+  // No metric, or no sleep recorded for that day, both mean the trend is unknown. Treating a
+  // missing measurement as 0 would report the user as sleeping a full target below where they are.
+  if (!metric || metric.sleep_hours === null || metric.sleep_hours === undefined) return "No sleep data yet";
   const diff = metric.sleep_hours - target;
   if (diff >= 0.5) return `${diff.toFixed(1)} hrs above your target`;
   if (diff <= -1) return `${Math.abs(diff).toFixed(1)} hrs below your target`;

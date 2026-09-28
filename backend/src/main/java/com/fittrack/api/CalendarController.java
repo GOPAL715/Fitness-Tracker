@@ -55,7 +55,7 @@ public class CalendarController {
         // UNION ALL rather than one query per table per day: seven range scans regardless of window size.
         String sql = """
                 SELECT metric_date::text AS date, steps, water_oz, calories_burned, active_minutes, sleep_hours, readiness
-                  FROM daily_metrics WHERE user_id=CAST(:u AS uuid) AND metric_date BETWEEN :f AND :t
+                  FROM v_daily_metrics_canonical WHERE user_id=CAST(:u AS uuid) AND metric_date BETWEEN :f AND :t
                 UNION ALL
                 SELECT workout_date::text, NULL, NULL, NULL, NULL, NULL, NULL
                   FROM workouts WHERE user_id=CAST(:u AS uuid) AND workout_date BETWEEN :f AND :t AND completed
@@ -70,7 +70,7 @@ public class CalendarController {
                   FROM habit_logs l WHERE l.user_id=CAST(:u AS uuid) AND l.log_date BETWEEN :f AND :t AND l.completed
                 UNION ALL
                 SELECT metric_date::text, NULL, NULL, NULL, NULL, NULL, NULL
-                  FROM body_metrics WHERE user_id=CAST(:u AS uuid) AND metric_date BETWEEN :f AND :t
+                  FROM v_body_metrics_canonical WHERE user_id=CAST(:u AS uuid) AND metric_date BETWEEN :f AND :t
                 UNION ALL
                 SELECT achieved_date::text, NULL, NULL, NULL, NULL, NULL, NULL
                   FROM personal_records WHERE user_id=CAST(:u AS uuid) AND achieved_date BETWEEN :f AND :t
@@ -168,7 +168,7 @@ public class CalendarController {
         String sql = """
                 WITH d AS (
                   SELECT metric_date AS date, steps, water_oz, calories_burned, active_minutes, sleep_hours
-                    FROM daily_metrics WHERE user_id=CAST(:u AS uuid) AND metric_date BETWEEN :f AND :t
+                    FROM v_daily_metrics_canonical WHERE user_id=CAST(:u AS uuid) AND metric_date BETWEEN :f AND :t
                 ), w AS (
                   SELECT workout_date AS date, count(*) AS n FROM workouts
                     WHERE user_id=CAST(:u AS uuid) AND workout_date BETWEEN :f AND :t AND completed GROUP BY 1
