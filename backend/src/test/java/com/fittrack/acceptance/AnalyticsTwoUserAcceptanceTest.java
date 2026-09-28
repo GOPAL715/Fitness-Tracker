@@ -198,6 +198,6 @@ class AnalyticsTwoUserAcceptanceTest extends AbstractAcceptanceTest {
     void analyticsRequireAuthentication() throws Exception {
         assertUnauthenticated(get("/api/v1/analytics/ai-usage"));
         assertUnauthenticated(get("/api/v1/analytics/dashboard"));
-        assertThat(mvc.perform(post("/api/v1/coach/analyze")).andReturn().getResponse().getStatus()).isEqualTo(401);
+        assertThat(mvc.perform(post("/api/v1/coach/insights")).andReturn().getResponse().getStatus()).isEqualTo(401);
     }
 }

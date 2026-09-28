@@ -33,7 +33,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 class AiCostDisabledAcceptanceTest extends AiAssertions {
 
     private MvcResult coach(Session user) throws Exception {
-        return call(user, post("/api/v1/coach/analyze").contentType(MediaType.APPLICATION_JSON).content("{}"));
+        return call(user, post("/api/v1/coach/insights").contentType(MediaType.APPLICATION_JSON).content("{}"));
     }
 
     @Test
@@ -44,7 +44,7 @@ class AiCostDisabledAcceptanceTest extends AiAssertions {
 
         assertStatus(coach(user), 200);
 
-        Map<String, Object> row = soleUsageRow(user.id(), "weekly_coach");
+        Map<String, Object> row = soleUsageRow(user.id(), "coach");
         assertThat((Integer) row.get("input_tokens"))
                 .as("token quantities are still recorded").isEqualTo(FakeAiProvider.INPUT_TOKENS);
         assertThat((Integer) row.get("output_tokens")).isEqualTo(FakeAiProvider.OUTPUT_TOKENS);

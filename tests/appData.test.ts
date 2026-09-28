@@ -186,7 +186,8 @@ describe("tab configuration", () => {
     const ids = TABS.map((t) => t.id);
     expect(ids).toEqual([
       "today", "workouts", "progress", "nutrition",
-      "habits", "goals", "calendar", "profile",
+      // "coach" is new in Phase 9: the Coach has its own surface rather than living in Profile.
+      "habits", "goals", "coach", "calendar", "profile",
     ]);
   });
 

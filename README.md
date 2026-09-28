@@ -108,7 +108,8 @@ src/
     HabitsView.tsx           habits and reminders
     GoalsView.tsx            goal tracking
     CalendarView.tsx         month calendar, day summary and history timeline
-    ProfileView.tsx          settings, device status, AI coach, privacy
+    CoachView.tsx            AI Coach: window selection, question, structured insights
+ProfileView.tsx          settings, device status, coach messages, privacy
 public/
   manifest.webmanifest       PWA manifest
   sw.js                      service worker (app shell only, never caches private data)

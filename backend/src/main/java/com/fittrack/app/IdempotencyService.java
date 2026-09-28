@@ -50,4 +50,31 @@ public class IdempotencyService {
             // A parallel duplicate already recorded this key; its result is authoritative.
         }
     }
+
+    /**
+     * Atomically claims a key, returning true only for the caller that won the race.
+     *
+     * <p>Added for the Phase 9 Coach, where a duplicate must not reach the provider a second time.
+     * A read-then-write against {@link #find} plus {@link #record} cannot express that, because
+     * {@code record} resolves a conflict by doing nothing rather than reporting it: both callers
+     * would observe an empty ledger and both would proceed. Claiming the row in a single
+     * {@code on conflict do nothing} insert and inspecting the affected-row count is what makes the
+     * decision race-safe, and it leaves the existing composite behaviour untouched.
+     *
+     * @return true when this caller claimed the key and should do the work; false when the key was
+     *         already held, including by a request that is still in flight
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public boolean claim(UUID userId, String key, String resource) {
+        if (key == null || key.isBlank()) return true;
+        int inserted;
+        try {
+            inserted = jdbc.update("insert into idempotency_keys(user_id,idempotency_key,resource,result_id,child_count)"
+                            + " values (?::uuid,?,?,null,0) on conflict (user_id,idempotency_key) do nothing",
+                    userId, key, resource);
+        } catch (DataIntegrityViolationException e) {
+            return false;
+        }
+        return inserted == 1;
+    }
 }

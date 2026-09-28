@@ -68,11 +68,11 @@ class AiRequiresNewAcceptanceTest extends AiAssertions {
         Session user = register("requires-new-quota-");
 
         assertThatThrownBy(() -> new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
-            usage.start(user.id(), "weekly_coach");
+            usage.start(user.id(), "coach");
             throw new IllegalStateException("outer business operation failed after quota reservation");
         })).isInstanceOf(IllegalStateException.class);
 
-        assertThat(minuteCounter(user.id(), "weekly_coach")).isEqualTo(1);
+        assertThat(minuteCounter(user.id(), "coach")).isEqualTo(1);
     }
 
     @Test

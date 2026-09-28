@@ -93,17 +93,31 @@ public class FakeAiProvider implements AiProvider {
     @Override
     public String analyzeCoach(String factualContext) { return analyzeCoachWithMetadata(factualContext).text(); }
 
+    /** A structurally valid Phase 9 Coach answer. The parser rejects anything else. */
+    public static final String VALID_COACH_JSON = """
+            {"summary":"You trained consistently this week and hit your protein target.",
+             "observations":["Three completed sessions.","Protein averaged above target."],
+             "recommendations":["Keep the current weekly rhythm."],
+             "next_actions":["Schedule next week's first session."],
+             "warnings":[]}""";
+
     @Override
     public CoachAnalysis analyzeCoachWithMetadata(String factualContext) {
+        return analyzeCoachMessages(List.of(new CoachMessage("system", factualContext)));
+    }
+
+    @Override
+    public CoachAnalysis analyzeCoachMessages(List<CoachMessage> messages) {
         coachCalls.incrementAndGet();
-        lastCoachContext = factualContext;
+        lastCoachContext = messages.stream().map(CoachMessage::content)
+                .reduce("", (a, b) -> a + "\n" + b);
         return switch (mode) {
-            case SUCCESS -> new CoachAnalysis(MODEL, "Coach summary: keep training consistently.", null);
+            case SUCCESS -> new CoachAnalysis(MODEL, VALID_COACH_JSON, null);
             case SUCCESS_WITH_TOKENS, SUCCESS_WITH_TOKENS_AND_PRICING -> new CoachAnalysis(MODEL,
-                    "Coach summary: keep training consistently.",
+                    VALID_COACH_JSON,
                     new ProviderUsage(PROVIDER, MODEL, INPUT_TOKENS, OUTPUT_TOKENS));
             case TIMEOUT -> throw new AiProviderException(
-                    "upstream timed out after 45000ms for " + SECRET, "timeout");
+                    "upstream timed out after 20000ms for " + SECRET, "timeout");
             case PROVIDER_SERVER_ERROR -> throw new AiProviderException(
                     "upstream returned 503 for " + SECRET, "provider");
             case MALFORMED_RESPONSE -> throw new AiProviderException(

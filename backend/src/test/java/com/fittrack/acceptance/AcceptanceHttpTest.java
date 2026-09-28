@@ -8,6 +8,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import com.fittrack.ai.AiProvider;
+import com.fittrack.acceptance.support.FakeAiProvider;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
@@ -157,8 +158,10 @@ class AcceptanceHttpTest {
 
     @Test void coachUuidBindingUsesAuthenticatedIdentity() throws Exception {
         String access = mapper.readTree(registerUser("coach-uuid-")).path("access_token").asText();
-        org.mockito.Mockito.when(aiProvider.analyzeCoach(org.mockito.ArgumentMatchers.anyString())).thenReturn("mock review");
-        mvc.perform(post("/api/v1/coach/analyze").header("Authorization", "Bearer " + access).contentType(MediaType.APPLICATION_JSON).content("{}"))
+        org.mockito.Mockito.when(aiProvider.analyzeCoachMessages(org.mockito.ArgumentMatchers.anyList()))
+                .thenReturn(new AiProvider.CoachAnalysis("test-model",
+                        FakeAiProvider.VALID_COACH_JSON, null));
+        mvc.perform(post("/api/v1/coach/insights").header("Authorization", "Bearer " + access).contentType(MediaType.APPLICATION_JSON).content("{}"))
                 .andExpect(status().isOk());
     }
 

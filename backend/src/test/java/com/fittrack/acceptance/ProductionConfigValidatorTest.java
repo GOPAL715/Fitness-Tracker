@@ -37,7 +37,11 @@ class ProductionConfigValidatorTest {
     @Test
     @DisplayName("Phase 16 config - a real production secret set starts cleanly")
     void productionWithRealSecretsStarts() {
-        runner.withPropertyValues("app.production=true", "app.jwt-secret=" + GOOD_SECRET)
+        // Phase 9 added a production-only AI token ceiling, so a production start now also needs a
+        // positive value. The intent of this test is unchanged: correct secrets and a real database
+        // must start cleanly; it is not asserting that any particular value is the default.
+        runner.withPropertyValues("app.production=true", "app.jwt-secret=" + GOOD_SECRET,
+                        "app.ai-limits.tokens-per-day=100000")
                 .run(context -> assertThat(context).hasNotFailed());
     }
 
@@ -103,6 +107,60 @@ class ProductionConfigValidatorTest {
     }
 
 
+    /* ------------------------------------------------------------------ *
+     * Phase 9 / B-2: the AI token ceiling.
+     *
+     * The rule is deliberately narrow. Zero still means "unlimited" everywhere outside production,
+     * because that is the existing development and test behaviour and reinterpreting it globally
+     * would silently change the meaning of a published variable. Only production refuses to start
+     * without a positive ceiling, because that is the one case where "unlimited" is an uncapped
+     * bill rather than a convenience.
+     * ------------------------------------------------------------------ */
+
+    private static final String P9_JWT_SECRET = "a-production-secret-that-is-long-enough-32";
+
+    @Test
+    @DisplayName("Phase 9 - production with an unlimited AI token ceiling refuses to start")
+    void productionRefusesUnlimitedAiTokens() {
+        runner.withPropertyValues("app.production=true",
+                        "app.jwt-secret=" + P9_JWT_SECRET,
+                        "spring.datasource.url=jdbc:postgresql://db.internal:5432/fittrack",
+                        "spring.datasource.password=real-password",
+                        "app.ai-limits.tokens-per-day=0")
+                .run(context -> assertThat(stackTraceOf(context)).contains("AI_TOKENS_PER_DAY"));
+    }
+
+    @Test
+    @DisplayName("Phase 9 - a negative AI token ceiling is also refused in production")
+    void productionRefusesNegativeAiTokens() {
+        runner.withPropertyValues("app.production=true",
+                        "app.jwt-secret=" + P9_JWT_SECRET,
+                        "spring.datasource.url=jdbc:postgresql://db.internal:5432/fittrack",
+                        "spring.datasource.password=real-password",
+                        "app.ai-limits.tokens-per-day=-1")
+                .run(context -> assertThat(stackTraceOf(context)).contains("AI_TOKENS_PER_DAY"));
+    }
+
+    @Test
+    @DisplayName("Phase 9 - production with a positive AI token ceiling starts")
+    void productionAcceptsPositiveAiTokens() {
+        runner.withPropertyValues("app.production=true",
+                        "app.jwt-secret=" + P9_JWT_SECRET,
+                        "spring.datasource.url=jdbc:postgresql://db.internal:5432/fittrack",
+                        "spring.datasource.password=real-password",
+                        "app.ai-limits.tokens-per-day=100000")
+                .run(context -> assertThat(context).hasNotFailed());
+    }
+
+    @Test
+    @DisplayName("Phase 9 - non-production keeps the existing unlimited (0) behaviour")
+    void nonProductionAllowsUnlimitedAiTokens() {
+        runner.withPropertyValues("app.production=false",
+                        "app.jwt-secret=change-this-development-secret-to-at-least-32-bytes",
+                        "app.ai-limits.tokens-per-day=0")
+                .run(context -> assertThat(context).hasNotFailed());
+    }
+
     /** The full throwable chain, so a wrapped guard message can still be asserted. */
     private static String stackTraceOf(org.springframework.boot.test.context.assertj.AssertableApplicationContext context) {
         StringBuilder text = new StringBuilder();
@@ -120,8 +178,9 @@ class ProductionConfigValidatorTest {
                 @Value("${app.production:false}") boolean production,
                 @Value("${app.jwt-secret:}") String jwt,
                 @Value("${spring.datasource.url:}") String url,
-                @Value("${spring.datasource.password:}") String password) {
-            return new ProductionConfigValidator(production, jwt, url, password);
+                @Value("${spring.datasource.password:}") String password,
+                @Value("${app.ai-limits.tokens-per-day:0}") int aiTokensPerDay) {
+            return new ProductionConfigValidator(production, jwt, url, password, aiTokensPerDay);
         }
     }
 }

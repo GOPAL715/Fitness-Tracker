@@ -27,16 +27,19 @@ public class ProductionConfigValidator {
     private final String jwtSecret;
     private final String databaseUrl;
     private final String databasePassword;
+    private final int aiTokensPerDay;
 
     public ProductionConfigValidator(
             @Value("${app.production:false}") boolean production,
             @Value("${app.jwt-secret:}") String jwtSecret,
             @Value("${spring.datasource.url:}") String databaseUrl,
-            @Value("${spring.datasource.password:}") String databasePassword) {
+            @Value("${spring.datasource.password:}") String databasePassword,
+            @Value("${app.ai-limits.tokens-per-day:0}") int aiTokensPerDay) {
         this.production = production;
         this.jwtSecret = jwtSecret == null ? "" : jwtSecret;
         this.databaseUrl = databaseUrl == null ? "" : databaseUrl;
         this.databasePassword = databasePassword == null ? "" : databasePassword;
+        this.aiTokensPerDay = aiTokensPerDay;
     }
 
     @PostConstruct
@@ -51,6 +54,15 @@ public class ProductionConfigValidator {
         }
         if (databasePassword.isBlank() || "postgres".equals(databasePassword)) {
             throw new IllegalStateException("DATABASE_PASSWORD must be set in production. Refusing to start.");
+        }
+        // A non-positive token ceiling means "unlimited", which is the right default for local
+        // development and the test suite but is an uncapped bill in production. The check is here
+        // rather than in the quota path so that flipping the meaning of zero stays a
+        // development-only convenience and never becomes a production bypass.
+        if (aiTokensPerDay <= 0) {
+            throw new IllegalStateException(
+                    "AI_TOKENS_PER_DAY must be a positive token ceiling in production; 0 means "
+                            + "unlimited, which is only acceptable outside production. Refusing to start.");
         }
         log.info("production_configuration_validated");
     }

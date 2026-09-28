@@ -28,7 +28,6 @@ import { SectionHeader, EmptyState } from "../components/ui";
 import { relativeTime } from "../lib/utils";
 import { useAuth } from "../lib/auth";
 import { apiData } from "../lib/api/dataAdapter";
-import { analyzeCoach } from "../lib/api/coachApi";
 import { HEALTH_PROVIDERS, statusLabel, statusTone } from "../lib/healthProviders";
 
 type Props = {
@@ -105,16 +104,13 @@ export function formToPayload(form: ProfileForm): Record<string, string | number
   return payload;
 }
 
-
 export default function ProfileView({ profile, devices, notifications, onRefresh }: Props) {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [syncing, setSyncing] = useState<string | null>(null);
   const { session } = useAuth();
-  const [coachBusy, setCoachBusy] = useState(false);
   const [coachError, setCoachError] = useState<string | null>(null);
-  const [coachReview, setCoachReview] = useState<WeeklyReview | null>(null);
 
   const [form, setForm] = useState<ProfileForm>(() => profileToForm(profile));
   /** True once the user edits a field, so a background refresh cannot discard their typing. */
@@ -217,21 +213,6 @@ export default function ProfileView({ profile, devices, notifications, onRefresh
   }
 
   const unread = notifications.filter((n) => !n.is_read).length;
-
-  async function generateReview() {
-    setCoachBusy(true);
-    setCoachError(null);
-    setCoachReview(null);
-    try {
-      const payload = await analyzeCoach({});
-      if (!payload?.review) { setCoachError("The review came back empty. Please try again."); return; }
-      setCoachReview(payload.review as WeeklyReview); onRefresh();
-    } catch {
-      setCoachError("We could not reach the coaching service. Check your connection and try again.");
-    } finally {
-      setCoachBusy(false);
-    }
-  }
 
   return (
     <div className="flex-col" style={{ animation: "fadeInUp 0.4s ease both" }}>
@@ -446,14 +427,8 @@ export default function ProfileView({ profile, devices, notifications, onRefresh
         </div>
         <p style={{ fontSize: 13, color: "#94a3b8", margin: "0 0 18px", lineHeight: 1.55 }}>
           Personalized notes generated from your recent activity, recovery, and nutrition patterns.
+          Ask a question and get tailored guidance from the Coach tab.
         </p>
-
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginBottom: 18 }}>
-          <button className="btn" onClick={generateReview} disabled={coachBusy}>
-            <Sparkles size={16} /> {coachBusy ? "Reviewing your week…" : "Generate weekly review"}
-          </button>
-          {coachBusy && <span className="spinner" style={{ width: 20, height: 20, borderWidth: 2 }} />}
-        </div>
 
         {coachError && (
           <div className="form-error" role="alert" style={{ marginBottom: 16 }}>
@@ -462,27 +437,6 @@ export default function ProfileView({ profile, devices, notifications, onRefresh
           </div>
         )}
 
-        {coachReview && (
-          <div className="review-card">
-            <div style={{ fontSize: 15, fontWeight: 800, color: "#f0f6fc", marginBottom: 10 }}>{coachReview.summary}</div>
-
-            {coachReview.went_well.length > 0 && (
-              <ReviewBlock title="What went well" items={coachReview.went_well} tone="#4ade80" />
-            )}
-            {coachReview.improve.length > 0 && (
-              <ReviewBlock title="Areas to improve" items={coachReview.improve} tone="#fb923c" />
-            )}
-
-            <ReviewLine title="Training" text={coachReview.training} />
-            <ReviewLine title="Nutrition" text={coachReview.nutrition} />
-            <ReviewLine title="Recovery" text={coachReview.recovery} />
-            <ReviewLine title="Next week's focus" text={coachReview.focus_next_week} />
-
-            <p className="estimate-note" style={{ marginTop: 10 }}>
-              Generated from your logged data. This is guidance, not medical advice.
-            </p>
-          </div>
-        )}
         {notifications.length === 0 ? (
           <EmptyState
             icon={<Bell size={28} color="#64748b" />}
@@ -565,42 +519,6 @@ export default function ProfileView({ profile, devices, notifications, onRefresh
   );
 }
 
-type WeeklyReview = {
-  summary: string;
-  went_well: string[];
-  improve: string[];
-  training: string;
-  nutrition: string;
-  recovery: string;
-  focus_next_week: string;
-};
-
-function ReviewBlock({ title, items, tone }: { title: string; items: string[]; tone: string }) {
-  return (
-    <div style={{ marginBottom: 12 }}>
-      <div style={{ fontSize: 12, fontWeight: 700, color: tone, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 6 }}>
-        {title}
-      </div>
-      <ul style={{ margin: 0, paddingLeft: 18, display: "flex", flexDirection: "column", gap: 4 }}>
-        {items.map((i) => (
-          <li key={i} style={{ fontSize: 13, color: "#cbd5e1", lineHeight: 1.5 }}>{i}</li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-
-function ReviewLine({ title, text }: { title: string; text: string }) {
-  return (
-    <div style={{ marginBottom: 10 }}>
-      <div style={{ fontSize: 12, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 3 }}>
-        {title}
-      </div>
-      <p style={{ fontSize: 13, color: "#cbd5e1", margin: 0, lineHeight: 1.55 }}>{text}</p>
-    </div>
-  );
-}
-
 function PrivacyRow({ icon, title, detail }: { icon: React.ReactNode; title: string; detail: string }) {
   return (
     <div style={{ display: "flex", gap: 12 }}>
@@ -625,11 +543,4 @@ function PrivacyRow({ icon, title, detail }: { icon: React.ReactNode; title: str
     </div>
   );
 }
-
-
-
-
-
-
-
 

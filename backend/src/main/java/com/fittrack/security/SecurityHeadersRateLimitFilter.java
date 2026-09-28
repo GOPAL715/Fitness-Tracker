@@ -28,6 +28,7 @@ public class SecurityHeadersRateLimitFilter extends OncePerRequestFilter {
     private final int authLimit, authWindowSeconds;
     private final int apiLimit, apiWindowSeconds;
     private final int aiLimit, aiWindowSeconds;
+    private final int coachLimit, coachWindowSeconds;
 
     public SecurityHeadersRateLimitFilter(RateLimitService limiter,
             @Value("${app.production:false}") boolean production,
@@ -36,7 +37,9 @@ public class SecurityHeadersRateLimitFilter extends OncePerRequestFilter {
             @Value("${app.rate-limit.api-requests:300}") int apiLimit,
             @Value("${app.rate-limit.api-window-seconds:60}") int apiWindow,
             @Value("${app.rate-limit.ai-requests:20}") int aiLimit,
-            @Value("${app.rate-limit.ai-window-seconds:60}") int aiWindow) {
+            @Value("${app.rate-limit.ai-window-seconds:60}") int aiWindow,
+            @Value("${app.rate-limit.coach-requests:20}") int coachLimit,
+            @Value("${app.rate-limit.coach-window-seconds:60}") int coachWindow) {
         this.limiter = limiter;
         this.production = production;
         this.authLimit = authLimit;
@@ -45,6 +48,8 @@ public class SecurityHeadersRateLimitFilter extends OncePerRequestFilter {
         this.apiWindowSeconds = apiWindow;
         this.aiLimit = aiLimit;
         this.aiWindowSeconds = aiWindow;
+        this.coachLimit = coachLimit;
+        this.coachWindowSeconds = coachWindow;
     }
 
     @Override
@@ -80,6 +85,17 @@ public class SecurityHeadersRateLimitFilter extends OncePerRequestFilter {
         boolean authenticated = authentication != null && authentication.isAuthenticated()
                 && authentication.getName() != null
                 && !"anonymousUser".equals(String.valueOf(authentication.getPrincipal()));
+
+        // The Coach gets its own bucket rather than sharing the general AI one. The two are
+        // different layers with different jobs: this is transport protection for one endpoint,
+        // while the AI quota in AiUsageService bounds actual provider consumption. Giving Coach
+        // its own bucket means its limit can be tuned without changing scanner or composite
+        // write behaviour, which share the general AI bucket below.
+        if (authenticated && path.startsWith("/api/v1/coach/")) {
+            return limiter.hit("coach", authentication.getName(), coachLimit,
+                    Duration.ofSeconds(coachWindowSeconds), false);
+        }
+
         // AI and scanner traffic is expensive; it gets its own tighter bucket keyed by user.
         if (authenticated && (path.contains("/coach/") || path.contains("/food-scans")
                 || path.contains("/complete"))) {

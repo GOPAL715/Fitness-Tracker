@@ -31,7 +31,7 @@ class AiAccountingAcceptanceTest extends AiAssertions {
     static final byte[] JPEG = {(byte) 0xff, (byte) 0xd8, (byte) 0xff, 0x01, 0x02};
 
     MvcResult coach(Session user) throws Exception {
-        return call(user, post("/api/v1/coach/analyze").contentType(MediaType.APPLICATION_JSON).content("{}"));
+        return call(user, post("/api/v1/coach/insights").contentType(MediaType.APPLICATION_JSON).content("{}"));
     }
 
     MvcResult scan(Session user) throws Exception {
@@ -48,15 +48,17 @@ class AiAccountingAcceptanceTest extends AiAssertions {
         fake().use(Mode.SUCCESS_WITH_TOKENS);
         String requestId = UUID.randomUUID().toString();
 
-        MvcResult result = call(user, post("/api/v1/coach/analyze")
+        MvcResult result = call(user, post("/api/v1/coach/insights")
                 .header("X-Request-Id", requestId)
                 .contentType(MediaType.APPLICATION_JSON).content("{}"));
         assertStatus(result, 200);
-        assertThat(json(result).path("analysis").asText()).isNotBlank();
+        // Phase 9 replaced the free-form "analysis" field with the validated "summary" contract.
+        // The assertion's intent is unchanged: the request returned real Coach content.
+        assertThat(json(result).path("summary").asText()).isNotBlank();
 
-        Map<String, Object> row = soleUsageRow(user.id(), "weekly_coach");
+        Map<String, Object> row = soleUsageRow(user.id(), "coach");
         assertThat(row.get("user_id").toString()).as("owner comes from the JWT subject").isEqualTo(user.id());
-        assertThat(row.get("feature")).isEqualTo("weekly_coach");
+        assertThat(row.get("feature")).isEqualTo("coach");
         assertThat(row.get("provider")).isEqualTo(FakeAiProvider.PROVIDER);
         assertThat(row.get("model")).isEqualTo(FakeAiProvider.MODEL);
         assertThat(row.get("request_id").toString()).as("request id is correlated").isEqualTo(requestId);
@@ -75,7 +77,7 @@ class AiAccountingAcceptanceTest extends AiAssertions {
 
         assertStatus(coach(user), 200);
 
-        Map<String, Object> row = soleUsageRow(user.id(), "weekly_coach");
+        Map<String, Object> row = soleUsageRow(user.id(), "coach");
         assertThat((Integer) row.get("input_tokens")).isEqualTo(FakeAiProvider.INPUT_TOKENS);
         assertThat((Integer) row.get("output_tokens")).isEqualTo(FakeAiProvider.OUTPUT_TOKENS);
         assertThat((Integer) row.get("total_tokens"))
@@ -91,7 +93,7 @@ class AiAccountingAcceptanceTest extends AiAssertions {
 
         assertStatus(coach(user), 200);
 
-        Map<String, Object> row = soleUsageRow(user.id(), "weekly_coach");
+        Map<String, Object> row = soleUsageRow(user.id(), "coach");
         assertThat(row.get("input_tokens")).isNull();
         assertThat(row.get("output_tokens")).isNull();
         assertThat(row.get("total_tokens")).isNull();
@@ -108,9 +110,9 @@ class AiAccountingAcceptanceTest extends AiAssertions {
 
         assertStructuredError(coach(user), 502, "Bad Gateway");
 
-        Map<String, Object> row = soleUsageRow(user.id(), "weekly_coach");
+        Map<String, Object> row = soleUsageRow(user.id(), "coach");
         assertThat(row.get("user_id").toString()).isEqualTo(user.id());
-        assertThat(row.get("feature")).isEqualTo("weekly_coach");
+        assertThat(row.get("feature")).isEqualTo("coach");
         assertThat(row.get("error_category")).isEqualTo("timeout");
         assertThat(row.get("success")).isEqualTo(false);
         assertThat(row.get("model")).as("model is server-known even on failure").isEqualTo("fake-text-model");
@@ -129,7 +131,7 @@ class AiAccountingAcceptanceTest extends AiAssertions {
 
         assertStructuredError(coach(user), 502, "Bad Gateway");
 
-        Map<String, Object> row = soleUsageRow(user.id(), "weekly_coach");
+        Map<String, Object> row = soleUsageRow(user.id(), "coach");
         assertThat(row.get("user_id").toString()).isEqualTo(user.id());
         assertThat(row.get("error_category")).isEqualTo("provider");
         assertThat(row.get("success")).isEqualTo(false);
@@ -146,7 +148,7 @@ class AiAccountingAcceptanceTest extends AiAssertions {
 
         assertStructuredError(coach(user), 502, "Bad Gateway");
 
-        Map<String, Object> row = soleUsageRow(user.id(), "weekly_coach");
+        Map<String, Object> row = soleUsageRow(user.id(), "coach");
         assertThat(row.get("error_category")).isEqualTo("malformed");
         assertThat(row.get("success")).isEqualTo(false);
         // Deterministic: one request yields exactly one accounting row.
@@ -182,7 +184,7 @@ class AiAccountingAcceptanceTest extends AiAssertions {
 
         assertStructuredError(coach(user), 500, "Internal Server Error");
 
-        Map<String, Object> row = soleUsageRow(user.id(), "weekly_coach");
+        Map<String, Object> row = soleUsageRow(user.id(), "coach");
         assertThat(row.get("error_category")).isEqualTo("application");
         assertThat(row.get("success")).isEqualTo(false);
     }

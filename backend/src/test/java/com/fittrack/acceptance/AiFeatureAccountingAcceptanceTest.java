@@ -40,7 +40,7 @@ class AiFeatureAccountingAcceptanceTest extends AiAssertions {
     }
 
     private MvcResult coach(Session user) throws Exception {
-        return call(user, post("/api/v1/coach/analyze").contentType(MediaType.APPLICATION_JSON).content("{}"));
+        return call(user, post("/api/v1/coach/insights").contentType(MediaType.APPLICATION_JSON).content("{}"));
     }
 
     // --------------------------------------------------------- item 15 scanner
@@ -123,11 +123,12 @@ class AiFeatureAccountingAcceptanceTest extends AiAssertions {
 
         MvcResult result = coach(user);
         assertStatus(result, 200);
-        assertThat(json(result).path("analysis").asText()).isNotBlank();
+        // Phase 9 replaced the free-form "analysis" field with the validated "summary" contract.
+        assertThat(json(result).path("summary").asText()).isNotBlank();
 
-        Map<String, Object> row = soleUsageRow(user.id(), "weekly_coach");
+        Map<String, Object> row = soleUsageRow(user.id(), "coach");
         assertThat(row.get("user_id").toString()).isEqualTo(user.id());
-        assertThat(row.get("feature")).isEqualTo("weekly_coach");
+        assertThat(row.get("feature")).isEqualTo("coach");
         assertThat(row.get("success")).isEqualTo(true);
         assertThat((Integer) row.get("total_tokens")).isEqualTo(FakeAiProvider.TOTAL_TOKENS);
         assertThat(fake().coachCalls()).isEqualTo(1);
@@ -144,7 +145,7 @@ class AiFeatureAccountingAcceptanceTest extends AiAssertions {
 
         assertStructuredError(coach(user), 429, "Too Many Requests");
         assertThat(fake().coachCalls()).as("a rejected coach call must not reach the provider").isEqualTo(1);
-        assertThat(minuteCounter(user.id(), "weekly_coach")).isEqualTo(1);
+        assertThat(minuteCounter(user.id(), "coach")).isEqualTo(1);
     }
 
     @Test
@@ -155,7 +156,7 @@ class AiFeatureAccountingAcceptanceTest extends AiAssertions {
 
         assertStructuredError(coach(user), 502, "Bad Gateway");
 
-        Map<String, Object> row = soleUsageRow(user.id(), "weekly_coach");
+        Map<String, Object> row = soleUsageRow(user.id(), "coach");
         assertThat(row.get("user_id").toString()).as("ownership stays JWT-derived").isEqualTo(user.id());
         assertThat(row.get("error_category")).isEqualTo("provider");
         assertThat(row.get("success")).isEqualTo(false);
@@ -175,7 +176,7 @@ class AiFeatureAccountingAcceptanceTest extends AiAssertions {
 
         assertThat(minuteCounter(user.id(), "food_scan"))
                 .as("the scan consumed only the scan budget").isEqualTo(1);
-        assertThat(minuteCounter(user.id(), "weekly_coach"))
+        assertThat(minuteCounter(user.id(), "coach"))
                 .as("only the two coach calls consumed the coach budget").isEqualTo(1);
         assertThat(minuteCounter(other.id(), "food_scan"))
                 .as("a second user is unaffected").isZero();

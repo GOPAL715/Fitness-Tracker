@@ -12,6 +12,7 @@ import ProgressView from "./views/ProgressView";
 import NutritionView from "./views/NutritionView";
 import HabitsView from "./views/HabitsView";
 import GoalsView from "./views/GoalsView";
+import CoachView from "./views/CoachView";
 import CalendarView from "./views/CalendarView";
 import ProfileView from "./views/ProfileView";
 
@@ -110,6 +111,13 @@ export default function App() {
       )}
 
       {tab === "goals" && <GoalsView goals={app.goals} profile={app.profile} onRefresh={app.reload} />}
+
+      {tab === "coach" && <CoachView fallbackInput={{
+        sessions: app.workouts?.filter((w) => w.completed).length ?? 0,
+        totalMinutes: (app.workouts ?? []).reduce((sum, w) => sum + (w.duration_minutes ?? 0), 0),
+        mealsLogged: app.meals?.length ?? 0,
+        habitsTracked: app.habits?.length ?? 0,
+      }} />}
 
       {tab === "calendar" && <CalendarView />}
 

@@ -22,7 +22,7 @@ Base URL: `http://localhost:8080/api/v1` locally. Production base URL and TLS ar
 | PUT | `/api/v1/food-scans/{id}/items` | Yes | Scan item corrections | Recalculated review DTO |
 | POST | `/api/v1/food-scans/{id}/confirm` | Yes | Optional meal metadata | Confirmed scan DTO and meal ID |
 | DELETE | `/api/v1/food-scans/{id}` | Yes | UUID scan ID | 204 after row and stored-object cleanup |
-| POST | `/api/v1/coach/weekly-review` | Yes | None or empty JSON | `{ "review": "<AI-provider response>" }`; factual context is assembled server-side. |
+| POST | `/api/v1/coach/insights` | Yes | Optional `{ "question"?: string (max 500), "window_days"?: 7 \| 30 \| 90 }`; optional `Idempotency-Key` header | Structured `summary`, `observations`, `recommendations`, `next_actions`, `warnings`, `model`, `request_id`. Context is assembled and allowlisted server-side. See [ai-coach.md](ai-coach.md). |
 | GET | `/actuator/health` | No | None | Spring health payload. |
 
 Example:

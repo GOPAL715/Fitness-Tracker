@@ -50,6 +50,14 @@ uploads are persisted as scan rows and private owner-scoped files; correction, c
 and cleanup are implemented. Provider-specific production timeouts, redaction, quotas, cost controls,
 and durable managed object storage remain future work.
 
+The Coach (`POST /api/v1/coach/insights`) is a single request, single response endpoint with no
+conversation and no persisted history. Its context is assembled by a dedicated owner-scoped
+`CoachContextService` from an explicit column allowlist, serialised to bounded JSON, and sent as
+separate system / question / context messages so untrusted input never joins the system instruction.
+The provider's reply is parsed and range-checked before it can reach the client. The Coach uses the
+configured text model while the scanner keeps the vision model. Its idempotency decision, quota and
+rate-limit layering, privacy boundary and safety limits are documented in [ai-coach.md](ai-coach.md).
+
 ## Local Docker deployment
 
 Run from the repository root:

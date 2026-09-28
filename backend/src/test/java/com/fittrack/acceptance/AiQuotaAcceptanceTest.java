@@ -40,7 +40,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 class AiQuotaAcceptanceTest extends AiAssertions {
 
     private MvcResult coach(Session user) throws Exception {
-        return call(user, post("/api/v1/coach/analyze").contentType(MediaType.APPLICATION_JSON).content("{}"));
+        return call(user, post("/api/v1/coach/insights").contentType(MediaType.APPLICATION_JSON).content("{}"));
     }
 
     // ------------------------------------------------------------ 7 rejection
@@ -60,9 +60,9 @@ class AiQuotaAcceptanceTest extends AiAssertions {
 
         assertThat(fake().coachCalls())
                 .as("a rejected request must never reach the provider").isEqualTo(1);
-        assertThat(minuteCounter(user.id(), "weekly_coach"))
+        assertThat(minuteCounter(user.id(), "coach"))
                 .as("the rejected request must not consume quota").isEqualTo(1);
-        assertThat(dayCounter(user.id(), "weekly_coach")).isEqualTo(1);
+        assertThat(dayCounter(user.id(), "coach")).isEqualTo(1);
     }
 
     @Test
@@ -80,7 +80,7 @@ class AiQuotaAcceptanceTest extends AiAssertions {
                 .filter(r -> Boolean.FALSE.equals(r.get("success")))
                 .findFirst().orElseThrow();
         assertThat(rejected.get("user_id").toString()).isEqualTo(user.id());
-        assertThat(rejected.get("feature")).isEqualTo("weekly_coach");
+        assertThat(rejected.get("feature")).isEqualTo("coach");
         assertThat(rejected.get("error_category")).isEqualTo("quota");
         assertThat(rejected.get("total_tokens")).isNull();
         assertThat(rejected.get("estimated_cost")).isNull();
@@ -138,9 +138,9 @@ class AiQuotaAcceptanceTest extends AiAssertions {
                 .containsExactlyInAnyOrder(200, 429);
         assertThat(fake().coachCalls())
                 .as("at most one provider invocation for a quota of one").isEqualTo(1);
-        assertThat(minuteCounter(user.id(), "weekly_coach"))
+        assertThat(minuteCounter(user.id(), "coach"))
                 .as("the atomic reservation never double-counts").isEqualTo(1);
-        assertThat(dayCounter(user.id(), "weekly_coach")).isEqualTo(1);
+        assertThat(dayCounter(user.id(), "coach")).isEqualTo(1);
         assertThat(usageCount(user.id())).as("one success row plus one rejection row").isEqualTo(2);
     }
 
@@ -159,10 +159,9 @@ class AiQuotaAcceptanceTest extends AiAssertions {
 
         Integer negative = jdbc.queryForObject(
                 "select count(*) from ai_quota_counters where user_id=CAST(? as uuid)"
-                        + " and feature='weekly_coach' and request_count < 0",
+                        + " and feature='coach' and request_count < 0",
                 Integer.class, user.id());
         assertThat(negative).as("no negative counter rows").isZero();
-        assertThat(minuteCounter(user.id(), "weekly_coach")).isEqualTo(1);
+        assertThat(minuteCounter(user.id(), "coach")).isEqualTo(1);
     }
 }
-

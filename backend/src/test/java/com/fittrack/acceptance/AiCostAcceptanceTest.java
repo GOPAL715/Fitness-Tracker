@@ -40,7 +40,7 @@ class AiCostAcceptanceTest extends AiAssertions {
     private static final BigDecimal PER_MILLION = new BigDecimal("1000000");
 
     private MvcResult coach(Session user) throws Exception {
-        return call(user, post("/api/v1/coach/analyze").contentType(MediaType.APPLICATION_JSON).content("{}"));
+        return call(user, post("/api/v1/coach/insights").contentType(MediaType.APPLICATION_JSON).content("{}"));
     }
 
     private static BigDecimal expectedCost() {
@@ -57,7 +57,7 @@ class AiCostAcceptanceTest extends AiAssertions {
 
         assertStatus(coach(user), 200);
 
-        Map<String, Object> row = soleUsageRow(user.id(), "weekly_coach");
+        Map<String, Object> row = soleUsageRow(user.id(), "coach");
         assertThat((Integer) row.get("input_tokens")).isEqualTo(FakeAiProvider.INPUT_TOKENS);
         assertThat((Integer) row.get("output_tokens")).isEqualTo(FakeAiProvider.OUTPUT_TOKENS);
         assertThat((Integer) row.get("total_tokens")).isEqualTo(FakeAiProvider.TOTAL_TOKENS);
@@ -93,7 +93,7 @@ class AiCostAcceptanceTest extends AiAssertions {
 
         assertStatus(coach(user), 200);
 
-        Map<String, Object> row = soleUsageRow(user.id(), "weekly_coach");
+        Map<String, Object> row = soleUsageRow(user.id(), "coach");
         assertThat(row.get("input_tokens")).isNull();
         assertThat(row.get("estimated_cost")).as("no tokens means no cost").isNull();
     }

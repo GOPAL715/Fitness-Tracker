@@ -37,6 +37,9 @@ app:
   ai-key: ${OPENAI_API_KEY:}
   ai-vision-model: ${AI_VISION_MODEL:gpt-4o-mini}
   ai-text-model: ${AI_TEXT_MODEL:gpt-4o-mini}
+  # Phase 9 Coach: a bounded interactive budget, separate from the scanner's.
+  # 20s is an interactive request budget; the scanner keeps the longer provider read timeout.
+  ai-coach-timeout-ms: ${AI_COACH_TIMEOUT_MS:20000}
   ai-limits:
     requests-per-minute: ${AI_REQUESTS_PER_MINUTE:10}
     requests-per-day: ${AI_REQUESTS_PER_DAY:100}
@@ -59,6 +62,11 @@ app:
     api-window-seconds: ${RATE_LIMIT_API_WINDOW:60}
     ai-requests: ${RATE_LIMIT_AI_REQUESTS:20}
     ai-window-seconds: ${RATE_LIMIT_AI_WINDOW:60}
+    # Phase 9 Coach. Deliberately its own bucket: this is transport protection for the Coach
+    # endpoint and is independent of the AI quota in AiUsageService, which is what actually bounds
+    # provider consumption. The two are different layers, not conflicting values.
+    coach-requests: ${RATE_LIMIT_COACH_REQUESTS:20}
+    coach-window-seconds: ${RATE_LIMIT_COACH_WINDOW:60}
     # When true the limiter uses Redis for shared state across instances. With Redis configured but
     # unreachable, authentication limits fail closed and general API limits fail open.
     redis-enabled: ${RATE_LIMIT_REDIS_ENABLED:false}

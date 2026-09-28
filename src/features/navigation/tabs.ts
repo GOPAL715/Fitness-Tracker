@@ -1,6 +1,6 @@
 import type { LucideIcon } from "lucide-react";
 import {
-  Activity, Dumbbell, TrendingUp, Utensils, Target, Repeat, User, CalendarDays,
+  Activity, Dumbbell, TrendingUp, Utensils, Target, Repeat, User, CalendarDays, Sparkles,
 } from "lucide-react";
 
 export type Tab =
@@ -10,6 +10,7 @@ export type Tab =
   | "nutrition"
   | "habits"
   | "goals"
+  | "coach"
   | "calendar"
   | "profile";
 
@@ -26,6 +27,7 @@ export const TABS: TabDefinition[] = [
   { id: "nutrition", label: "Nutrition", icon: Utensils },
   { id: "habits", label: "Habits", icon: Repeat },
   { id: "goals", label: "Goals", icon: Target },
+  { id: "coach", label: "Coach", icon: Sparkles },
   { id: "calendar", label: "History", icon: CalendarDays },
   { id: "profile", label: "Profile", icon: User },
 ];

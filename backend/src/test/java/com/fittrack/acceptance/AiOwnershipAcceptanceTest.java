@@ -33,7 +33,7 @@ class AiOwnershipAcceptanceTest extends AiAssertions {
     private static final byte[] JPEG = {(byte) 0xff, (byte) 0xd8, (byte) 0xff, 0x01, 0x02};
 
     private MvcResult coach(Session user, String body) throws Exception {
-        return call(user, post("/api/v1/coach/analyze").contentType(MediaType.APPLICATION_JSON).content(body));
+        return call(user, post("/api/v1/coach/insights").contentType(MediaType.APPLICATION_JSON).content(body));
     }
 
     // ---------------------------------------------------------- item 13 ownership
@@ -47,7 +47,7 @@ class AiOwnershipAcceptanceTest extends AiAssertions {
 
         assertStatus(coach(owner, "{}"), 200);
         UUID ownerUsageId = jdbc.queryForObject(
-                "select id from ai_usage where user_id=CAST(? as uuid) and feature='weekly_coach'",
+                "select id from ai_usage where user_id=CAST(? as uuid) and feature='coach'",
                 UUID.class, owner.id());
 
         MvcResult foreignList = getAs(other, "/api/v1/analytics/ai-usage");
@@ -101,9 +101,9 @@ class AiOwnershipAcceptanceTest extends AiAssertions {
 
         assertStatus(coach(attacker, hostile), 200);
 
-        Map<String, Object> row = soleUsageRow(attacker.id(), "weekly_coach");
+        Map<String, Object> row = soleUsageRow(attacker.id(), "coach");
         assertThat(row.get("user_id").toString()).as("owner comes from the JWT, not the body").isEqualTo(attacker.id());
-        assertThat(row.get("feature")).as("feature comes from the server route").isEqualTo("weekly_coach");
+        assertThat(row.get("feature")).as("feature comes from the server route").isEqualTo("coach");
         assertThat(row.get("provider")).as("provider comes from the real provider result")
                 .isEqualTo(FakeAiProvider.PROVIDER);
         assertThat((Integer) row.get("input_tokens")).isEqualTo(FakeAiProvider.INPUT_TOKENS);
@@ -160,7 +160,7 @@ class AiOwnershipAcceptanceTest extends AiAssertions {
         assertStatus(patch, 403);
 
         assertThat(usageCount(user.id())).isEqualTo(1);
-        assertThat((Integer) soleUsageRow(user.id(), "weekly_coach").get("input_tokens"))
+        assertThat((Integer) soleUsageRow(user.id(), "coach").get("input_tokens"))
                 .isEqualTo(FakeAiProvider.INPUT_TOKENS);
     }
 }
