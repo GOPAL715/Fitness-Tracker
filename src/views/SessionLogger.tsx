@@ -5,7 +5,7 @@ import { submitWorkoutSession } from "../lib/offline/workoutSync";
 import type { Exercise } from "../lib/types";
 import { Modal } from "../components/ui";
 import { estimateOneRepMax } from "../lib/workoutMetrics";
-import { round } from "../lib/utils";
+import { round, todayISO } from "../lib/utils";
 
 type SetDraft = { key: string; reps: string; weight: string; rpe: string };
 type ExerciseDraft = { key: string; exercise: Exercise; sets: SetDraft[] };
@@ -114,7 +114,7 @@ export default function SessionLogger({ exercises, onClose, onSaved, onQueued, i
 
     try {
       const result = await submitWorkoutSession({
-        session: { title: title.trim(), workout_type: workoutType, duration_minutes: Math.max(10, totals.sets * 3), perceived_effort: Number(effort) || 6, notes: notes.trim() || null, completed: true },
+        session: { title: title.trim(), workout_type: workoutType, session_date: todayISO(), duration_minutes: Math.max(10, totals.sets * 3), perceived_effort: Number(effort) || 6, notes: notes.trim() || null, completed: true },
         exercises: usable.map((d, i) => ({ exercise_id: d.exercise.id, order_index: i, notes: null, sets: d.sets.filter((s) => Number(s.reps) > 0 || Number(s.weight) > 0).map((s, idx) => ({ set_number: idx + 1, reps: Number(s.reps) > 0 ? Number(s.reps) : null, weight: Number(s.weight) > 0 ? Number(s.weight) : null, rpe: Number(s.rpe) > 0 ? Number(s.rpe) : null, completed: true })) }))
       });
       if (result.mode === "offline") onQueued?.();

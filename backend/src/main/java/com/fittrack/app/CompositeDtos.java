@@ -16,6 +16,14 @@ public final class CompositeDtos {
     public record WorkoutSessionData(
             @NotBlank @Size(max=160) String title,
             @NotBlank @Size(max=60) String workoutType,
+            /**
+             * The calendar day the session belongs to, in the user's own calendar.
+             *
+             * <p>Required and supplied by the client rather than derived server-side: the server has
+             * no way to know the user's local date, and deriving it from the server clock (or from
+             * started_at, which is UTC) files an early-morning session under the previous day.
+             */
+            @NotNull LocalDate sessionDate,
             @Min(0) @Max(1440) Integer durationMinutes,
             @Min(1) @Max(10) Integer perceivedEffort,
             @Size(max=2000) String notes,

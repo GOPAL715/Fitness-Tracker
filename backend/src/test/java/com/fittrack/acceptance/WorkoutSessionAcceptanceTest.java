@@ -18,6 +18,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import java.time.LocalDate;
 
 /**
  * Phase 4: workout and session logging acceptance tests.
@@ -55,12 +56,12 @@ class WorkoutSessionAcceptanceTest extends AbstractAcceptanceTest {
 
     private String sessionBody(UUID exerciseId, String title) {
         return """
-                {"session":{"title":"%s","workout_type":"Strength","duration_minutes":45,
+                {"session":{"title":"%s","workout_type":"Strength","session_date":"%s","duration_minutes":45,
                  "perceived_effort":7,"notes":null,"completed":true},
                  "exercises":[{"exercise_id":"%s","order_index":0,"notes":null,
                  "sets":[{"set_number":1,"reps":8,"weight":135.0,"rpe":7.0,"completed":true},
                          {"set_number":2,"reps":6,"weight":145.0,"rpe":8.0,"completed":true}]}]}
-                """.formatted(title, exerciseId);
+                """.formatted(title, LocalDate.now().toString(), exerciseId);
     }
 
     /* ---------- M1: started_at ---------- */

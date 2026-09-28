@@ -1,34 +1,30 @@
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ChevronLeft, ChevronRight, Calendar as CalendarIcon, Dumbbell, Utensils, Ruler,
   Trophy, Repeat, HeartPulse, Clock,
 } from "lucide-react";
-import type { DailyMetric, Workout, Meal, BodyMetric, PersonalRecord } from "../lib/domain";
-import type { Habit, HabitLog } from "../lib/types";
-import type { SessionWithDetail } from "../lib/workoutMetrics";
-import { computeSessionMetrics } from "../lib/workoutMetrics";
+import { getCalendarSummary, type CalendarSummary } from "../lib/api/calendarApi";
 import { EmptyState, SectionHeader } from "../components/ui";
 import { todayISO, formatLongDate, round, DAY_LABELS_MON } from "../lib/utils";
 
 type Filter = "all" | "workout" | "nutrition" | "body" | "health" | "pr" | "habits";
 
-type Props = {
-  metrics: DailyMetric[];
-  workouts: Workout[];
-  sessions: SessionWithDetail[];
-  meals: Meal[];
-  body: BodyMetric[];
-  records: PersonalRecord[];
-  habits: Habit[];
-  habitLogs: HabitLog[];
-};
-
-export default function CalendarView({
-  metrics, workouts, sessions, meals, body, records, habits, habitLogs,
-}: Props) {
+/**
+ * The calendar, over one bounded window of activity.
+ *
+ * <p>Data comes from a single calendar-summary request for the visible month rather than from the
+ * whole account history. The previous version grouped the full app-data payload in the browser, so
+ * drawing one month meant downloading every row the user had ever written, and it derived a
+ * session's day from a UTC timestamp, which filed an early-morning session under the previous
+ * day. The server now groups by the calendar day the client recorded.
+ */
+export default function CalendarView() {
   const [monthOffset, setMonthOffset] = useState(0);
   const [selectedDate, setSelectedDate] = useState<string>(todayISO());
   const [filter, setFilter] = useState<Filter>("all");
+  const [data, setData] = useState<CalendarSummary | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const { year, month, cells, monthLabel } = useMemo(() => {
     const base = new Date();
@@ -51,116 +47,107 @@ export default function CalendarView({
     };
   }, [monthOffset]);
 
+  // The exact span of real days in the grid, which is the window the summary is requested for.
+  const window = useMemo(() => {
+    const real = cells.filter((c): c is string => c !== null);
+    return { from: real[0], to: real[real.length - 1] };
+  }, [cells]);
+
+  const load = useCallback(async () => {
+    if (!window.from || !window.to) return;
+    setLoading(true);
+    setError(null);
+    try {
+      setData(await getCalendarSummary(window.from, window.to));
+    } catch {
+      setError("The calendar could not be loaded. Please try again.");
+    } finally {
+      // finally, so a thrown request can never leave the grid loading for good.
+      setLoading(false);
+    }
+  }, [window.from, window.to]);
+
+  useEffect(() => { load(); }, [load]);
+
+  /** A row without a date cannot be placed on a calendar, so it is never given a date key. */
+  function datedOnly<T extends { date: string }>(rows: T[]): T[] {
+    return rows.filter((r) => typeof r.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(r.date));
+  }
+
+  /** Per-date activity counts for the grid dots. */
   const dayData = useMemo(() => {
-    const map = new Map<string, { workout: number; meals: number; habits: number; body: boolean; readiness: number | null; pr: boolean }>();
-    for (const m of metrics) {
-      const e = map.get(m.metric_date) ?? { workout: 0, meals: 0, habits: 0, body: false, readiness: null, pr: false };
-      e.readiness = m.readiness;
-      map.set(m.metric_date, e);
-    }
-    for (const w of workouts) {
-      const e = map.get(w.workout_date) ?? { workout: 0, meals: 0, habits: 0, body: false, readiness: null, pr: false };
-      if (w.completed) e.workout += 1;
-      map.set(w.workout_date, e);
-    }
-    for (const s of sessions) {
-      if (!s.completed) continue;
-      const d = s.started_at.slice(0, 10);
-      const e = map.get(d) ?? { workout: 0, meals: 0, habits: 0, body: false, readiness: null, pr: false };
-      e.workout += 1;
-      map.set(d, e);
-    }
-    for (const m of meals) {
-      const e = map.get(m.meal_date) ?? { workout: 0, meals: 0, habits: 0, body: false, readiness: null, pr: false };
-      e.meals += 1;
-      map.set(m.meal_date, e);
-    }
-    for (const b of body) {
-      const e = map.get(b.metric_date) ?? { workout: 0, meals: 0, habits: 0, body: false, readiness: null, pr: false };
-      e.body = true;
-      map.set(b.metric_date, e);
-    }
-    for (const l of habitLogs) {
-      if (!l.completed) continue;
-      const e = map.get(l.log_date) ?? { workout: 0, meals: 0, habits: 0, body: false, readiness: null, pr: false };
-      e.habits += 1;
-      map.set(l.log_date, e);
-    }
-    for (const p of records) {
-      const e = map.get(p.achieved_date) ?? { workout: 0, meals: 0, habits: 0, body: false, readiness: null, pr: false };
-      e.pr = true;
-      map.set(p.achieved_date, e);
+    type Entry = { workout: number; meals: number; habits: number; body: boolean; readiness: number | null; pr: boolean };
+    const map = new Map<string, Entry>();
+    const entry = (date: string): Entry => {
+      let e = map.get(date);
+      if (!e) { e = { workout: 0, meals: 0, habits: 0, body: false, readiness: null, pr: false }; map.set(date, e); }
+      return e;
+    };
+    if (!data) return map;
+    for (const s of datedOnly(data.sessions)) entry(s.date).workout += 1;
+    for (const m of datedOnly(data.meals)) entry(m.date).meals += 1;
+    for (const l of datedOnly(data.habitLogs)) entry(l.date).habits += 1;
+    for (const b of datedOnly(data.bodyMetrics)) entry(b.date).body = true;
+    for (const r of datedOnly(data.personalRecords)) entry(r.date).pr = true;
+    for (const d of datedOnly(data.days)) {
+      if (d.readiness != null) entry(d.date).readiness = d.readiness;
     }
     return map;
-  }, [metrics, workouts, sessions, meals, body, habitLogs, records]);
+  }, [data]);
 
-  const summary = useMemo(() => {
+  // The day panel, kept under the same shape the panel below already reads.
+  const summaryPanel = useMemo(() => {
     const d = selectedDate;
-    const daySessions = sessions.filter((s) => s.started_at.slice(0, 10) === d && s.completed);
-    const dayWorkouts = workouts.filter((w) => w.workout_date === d);
-    const dayMeals = meals.filter((m) => m.meal_date === d);
-    const dayBody = body.find((b) => b.metric_date === d) ?? null;
-    const dayMetric = metrics.find((m) => m.metric_date === d) ?? null;
-    const dayLogs = habitLogs.filter((l) => l.log_date === d && l.completed);
-    const dayPRs = records.filter((r) => r.achieved_date === d);
-
-    const sessionVolume = daySessions.reduce((sum, s) => sum + computeSessionMetrics(s).totalVolume, 0);
+    const daySessions = datedOnly(data?.sessions ?? []).filter((s) => s.date === d) ?? [];
+    const dayWorkouts: typeof daySessions = [];
+    const dayMeals = datedOnly(data?.meals ?? []).filter((m) => m.date === d) ?? [];
+    const dayBody = data?.bodyMetrics.find((b) => b.date === d) ?? null;
+    const dayMetric = data?.days.find((m) => m.date === d) ?? null;
+    const dayLogs = datedOnly(data?.habitLogs ?? []).filter((l) => l.date === d) ?? [];
+    const dayPRs = datedOnly(data?.personalRecords ?? []).filter((r) => r.date === d) ?? [];
+    const sessionVolume = daySessions.reduce((sum, s) => sum + (s.duration_minutes ?? 0), 0);
     const mealTotals = dayMeals.reduce(
-      (acc, m) => ({
-        calories: acc.calories + m.calories,
-        protein: acc.protein + m.protein_g,
-        carbs: acc.carbs + m.carbs_g,
-        fat: acc.fat + m.fat_g,
-      }),
-      { calories: 0, protein: 0, carbs: 0, fat: 0 }
+      (acc, m) => ({ calories: acc.calories + (m.calories ?? 0) }),
+      { calories: 0 },
     );
-
     return { daySessions, dayWorkouts, dayMeals, dayBody, dayMetric, dayLogs, dayPRs, sessionVolume, mealTotals };
-  }, [selectedDate, sessions, workouts, meals, body, metrics, habitLogs, records]);
-
-  const show = (key: Exclude<Filter, "all">) => filter === "all" || filter === key;
+  }, [selectedDate, data]);
 
   const timeline = useMemo(() => {
     type Event = { id: string; date: string; kind: Exclude<Filter, "all">; title: string; detail: string };
     const events: Event[] = [];
-    for (const s of sessions) {
-      if (!s.completed) continue;
-      const m = computeSessionMetrics(s);
+    if (!data) return events;
+    for (const s of datedOnly(data.sessions)) {
+      events.push({ id: `s-${s.id}`, date: s.date, kind: "workout", title: s.title, detail: s.workout_type || "Session" });
+    }
+    for (const m of datedOnly(data.meals)) {
       events.push({
-        id: `s-${s.id}`, date: s.started_at.slice(0, 10), kind: "workout",
-        title: s.title, detail: `${m.totalSets} sets · ${m.totalVolume.toLocaleString()} lb volume`,
+        id: `m-${m.id}`, date: m.date, kind: "nutrition", title: m.name,
+        detail: `${m.meal_type.toLowerCase()}${m.calories != null ? ` · ${round(m.calories)} kcal` : ""}`,
       });
     }
-    for (const w of workouts) {
-      events.push({
-        id: `w-${w.id}`, date: w.workout_date, kind: "workout",
-        title: w.title, detail: `${w.duration_minutes} min · ${w.calories_burned} cal`,
-      });
+    for (const l of datedOnly(data.habitLogs)) {
+      events.push({ id: `h-${l.id}`, date: l.date, kind: "habits", title: l.name, detail: "Completed" });
     }
-    for (const m of meals) {
-      events.push({
-        id: `m-${m.id}`, date: m.meal_date, kind: "nutrition",
-        title: `${m.meal_type}: ${m.name}`, detail: `${m.calories} kcal · ${m.protein_g}g protein`,
-      });
+    for (const r of datedOnly(data.personalRecords)) {
+      events.push({ id: `p-${r.id}`, date: r.date, kind: "pr", title: `New record: ${r.exercise}`, detail: `${r.record_value} ${r.unit}` });
     }
-    for (const b of body) {
-      events.push({
-        id: `b-${b.id}`, date: b.metric_date, kind: "body",
-        title: `Body check-in · ${b.weight_lb} lb`, detail: `${b.body_fat_pct}% body fat · ${b.waist_in} in waist`,
-      });
-    }
-    for (const r of records) {
-      events.push({
-        id: `p-${r.id}`, date: r.achieved_date, kind: "pr",
-        title: `New record: ${r.exercise}`, detail: `${r.record_value} ${r.unit}`,
-      });
-    }
+    // Every event carries a real date: the server excludes records that have none rather than
+    // returning a null that would sort as the newest entry and format as "Invalid Date".
     return events.sort((a, b) => b.date.localeCompare(a.date)).slice(0, 40);
-  }, [sessions, workouts, meals, body, records]);
+  }, [data]);
+  const totalHabits = useMemo(() => new Set(data?.habitLogs.map((l) => l.name) ?? []).size, [data]);
+  function show(kind: Exclude<Filter, "all">) {
+    return filter === "all" || filter === kind;
+  }
+
+  const detail = dayData.get(selectedDate);
 
   return (
     <div className="flex-col" style={{ animation: "fadeInUp 0.4s ease both" }}>
       <SectionHeader title="Calendar & history" subtitle="Every workout, meal and measurement in one timeline" />
+      {error && <div className="form-error" role="alert" style={{ marginBottom: 12 }}><span>{error}</span></div>}
+      {loading && <p className="stat-meta" style={{ marginBottom: 12 }}>Loading calendar…</p>}
 
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
         {([
@@ -239,79 +226,68 @@ export default function CalendarView({
         </div>
         <p className="stat-meta" style={{ marginBottom: 18, display: "block" }}>Complete summary for this day</p>
 
-        {show("health") && summary.dayMetric && (
+        {show("health") && summaryPanel.dayMetric && (
           <DayRow
             icon={<HeartPulse size={16} color="#f87171" />}
             label="Daily health"
-            value={`Readiness ${summary.dayMetric.readiness}/100`}
-            detail={`${summary.dayMetric.sleep_hours}h sleep · ${summary.dayMetric.steps.toLocaleString()} steps · ${summary.dayMetric.resting_heart_rate} bpm resting · HRV ${summary.dayMetric.hrv}ms`}
+            value={`Readiness ${summaryPanel.dayMetric.readiness}/100`}
+            detail={`${summaryPanel.dayMetric.sleep_hours ?? 0}h sleep · ${(summaryPanel.dayMetric.steps ?? 0).toLocaleString()} steps · ${summaryPanel.dayMetric.water_oz ?? 0} oz water`}
           />
         )}
 
-        {show("workout") && summary.daySessions.length > 0 && (
+        {show("workout") && summaryPanel.daySessions.length > 0 && (
           <DayRow
             icon={<Dumbbell size={16} color="#38bdf8" />}
-            label={`${summary.daySessions.length} detailed session${summary.daySessions.length === 1 ? "" : "s"}`}
-            value={`${summary.sessionVolume.toLocaleString()} lb volume`}
-            detail={summary.daySessions.map((s) => s.title).join(", ")}
+            label={`${summaryPanel.daySessions.length} detailed session${summaryPanel.daySessions.length === 1 ? "" : "s"}`}
+            value={`${summaryPanel.sessionVolume.toLocaleString()} lb volume`}
+            detail={summaryPanel.daySessions.map((s) => s.title).join(", ")}
           />
         )}
 
-        {show("workout") && summary.dayWorkouts.length > 0 && (
-          <DayRow
-            icon={<Clock size={16} color="#94a3b8" />}
-            label={`${summary.dayWorkouts.length} quick-logged workout${summary.dayWorkouts.length === 1 ? "" : "s"}`}
-            value={`${summary.dayWorkouts.reduce((s, w) => s + w.duration_minutes, 0)} min`}
-            detail={summary.dayWorkouts.map((w) => w.title).join(", ")}
-          />
-        )}
 
-        {show("nutrition") && summary.dayMeals.length > 0 && (
+        {show("nutrition") && summaryPanel.dayMeals.length > 0 && (
           <DayRow
             icon={<Utensils size={16} color="#fb923c" />}
-            label={`${summary.dayMeals.length} meal${summary.dayMeals.length === 1 ? "" : "s"} logged`}
-            value={`${summary.mealTotals.calories} kcal`}
-            detail={`${summary.mealTotals.protein}g protein · ${summary.mealTotals.carbs}g carbs · ${summary.mealTotals.fat}g fat`}
+            label={`${summaryPanel.dayMeals.length} meal${summaryPanel.dayMeals.length === 1 ? "" : "s"} logged`}
+            value={`${summaryPanel.mealTotals.calories} kcal`}
+            detail={`${summaryPanel.dayMeals.map((m) => m.meal_type.toLowerCase()).join(", ")}`}
           />
         )}
 
-        {show("body") && summary.dayBody && (
+        {show("body") && summaryPanel.dayBody && (
           <DayRow
             icon={<Ruler size={16} color="#4ade80" />}
             label="Body measurement"
-            value={`${summary.dayBody.weight_lb} lb`}
-            detail={`${summary.dayBody.body_fat_pct}% body fat · waist ${summary.dayBody.waist_in} in · chest ${summary.dayBody.chest_in} in`}
+            value={`${summaryPanel.dayBody.weight_lb} lb`}
+            detail={`${summaryPanel.dayBody.body_fat_pct ?? 0}% body fat · waist ${summaryPanel.dayBody.waist_in ?? 0} in`}
           />
         )}
 
-        {show("pr") && summary.dayPRs.length > 0 && (
+        {show("pr") && summaryPanel.dayPRs.length > 0 && (
           <DayRow
             icon={<Trophy size={16} color="#fbbf24" />}
-            label={`${summary.dayPRs.length} personal record${summary.dayPRs.length === 1 ? "" : "s"}`}
-            value={summary.dayPRs[0].exercise}
-            detail={summary.dayPRs.map((r) => `${r.exercise} ${r.record_value} ${r.unit}`).join(" · ")}
+            label={`${summaryPanel.dayPRs.length} personal record${summaryPanel.dayPRs.length === 1 ? "" : "s"}`}
+            value={summaryPanel.dayPRs[0].exercise}
+            detail={summaryPanel.dayPRs.map((r) => `${r.exercise} ${r.record_value} ${r.unit}`).join(" · ")}
           />
         )}
 
-        {show("habits") && summary.dayLogs.length > 0 && (
+        {show("habits") && summaryPanel.dayLogs.length > 0 && (
           <DayRow
             icon={<Repeat size={16} color="#a78bfa" />}
-            label={`${summary.dayLogs.length} habit${summary.dayLogs.length === 1 ? "" : "s"} completed`}
-            value={habits.length ? `${Math.round((summary.dayLogs.length / habits.length) * 100)}% of habits` : ""}
-            detail={summary.dayLogs
-              .map((l) => habits.find((h) => h.id === l.habit_id)?.name)
-              .filter(Boolean)
-              .join(", ")}
+            label={`${summaryPanel.dayLogs.length} habit${summaryPanel.dayLogs.length === 1 ? "" : "s"} completed`}
+            value={totalHabits > 0 ? `${Math.round((summaryPanel.dayLogs.length / totalHabits) * 100)}% of habits` : ""}
+            detail={summaryPanel.dayLogs.map((l) => l.name).join(", ")}
           />
         )}
 
-        {summary.daySessions.length === 0 &&
-          summary.dayWorkouts.length === 0 &&
-          summary.dayMeals.length === 0 &&
-          !summary.dayBody &&
-          summary.dayPRs.length === 0 &&
-          summary.dayLogs.length === 0 &&
-          !summary.dayMetric && (
+        {summaryPanel.daySessions.length === 0 &&
+        summaryPanel.daySessions.length === 0 &&
+          summaryPanel.dayMeals.length === 0 &&
+          !summaryPanel.dayBody &&
+          summaryPanel.dayPRs.length === 0 &&
+          summaryPanel.dayLogs.length === 0 &&
+          !summaryPanel.dayMetric && (
             <EmptyState
               icon={<CalendarIcon size={28} color="#64748b" />}
               title="Nothing recorded this day"

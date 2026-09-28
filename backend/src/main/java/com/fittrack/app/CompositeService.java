@@ -19,11 +19,19 @@ public class CompositeService {
         UUID user = owner(userId);
         UUID session = UUID.randomUUID();
         var s = request.session();
-        // started_at is server-generated, never client-supplied: the calendar, set tracking and
-        // metrics all read it as the session date, and a null value would break them.
+        // started_at is server-generated and never client-supplied: it is the real instant the
+        // session was recorded. session_date, supplied by the client, is the user's own calendar day
+        // and is the field the calendar groups by, because started_at is a UTC instant and would file
+        // an early-morning session under the previous day.
         java.sql.Timestamp now = java.sql.Timestamp.from(Instant.now());
-        jdbc.update("INSERT INTO workout_sessions(id,user_id,title,workout_type,started_at,duration_minutes,perceived_effort,notes,completed,completed_at) VALUES (?,?::uuid,?,?,?,?,?,?,?,?)",
-                session,user,s.title(),s.workoutType(),now,s.durationMinutes(),s.perceivedEffort(),s.notes(),s.completed(),s.completed()?now:null);
+        // A session records a day that has already happened, so a clearly future calendar date is a
+        // client mistake. One day of tolerance is allowed, matching habit logs: the furthest any real
+        // calendar is from UTC is +14:00, so a caller's local today can be a day ahead of the server's.
+        if (s.sessionDate().isAfter(java.time.LocalDate.now(java.time.ZoneOffset.UTC).plusDays(1))) {
+            throw new IllegalArgumentException("session_date must not be in the future");
+        }
+        jdbc.update("INSERT INTO workout_sessions(id,user_id,title,workout_type,started_at,session_date,duration_minutes,perceived_effort,notes,completed,completed_at) VALUES (?,?::uuid,?,?,?,?,?,?,?,?,?)",
+                session,user,s.title(),s.workoutType(),now,s.sessionDate(),s.durationMinutes(),s.perceivedEffort(),s.notes(),s.completed(),s.completed()?now:null);
         int childCount=0;
         for (SessionExerciseData e : request.exercises()) {
             requireCatalog("exercises", e.exerciseId());

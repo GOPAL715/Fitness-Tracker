@@ -246,6 +246,16 @@ public class OwnedResourceService {
                 throw new IllegalArgumentException("weight_lb must be greater than zero");
             }
         }
+        if ("personal_records".equals(spec.table())) {
+            // A record without a date has no place on a calendar, and a null date used to reach the
+            // UI, where it produced a literal "Invalid Date" and was sorted as the newest event. A new
+            // record therefore has to carry one. Rows that predate this rule keep their null value:
+            // the calendar skips them rather than inventing a day for history it does not know.
+            requireNonBlank(values, "exercise");
+            if (creating && values.get("achieved_date") == null) {
+                throw new IllegalArgumentException("achieved_date is required");
+            }
+        }
         if ("habits".equals(spec.table())) {
             // A habit is only meaningful with a name, and the weekly-rate bar is computed from
             // target_per_week, so a create has to supply both. On an update they stay optional,

@@ -335,7 +335,7 @@ class GoalsProgressAcceptanceTest extends AbstractAcceptanceTest {
         Session owner = register("p5-pr-");
         Session other = register("p5-pr-other-");
         String id = json(postAs(owner, "/api/v1/personal-records",
-                "{\"exercise\":\"Bench Press\",\"record_value\":225,\"unit\":\"lbs\"}")).path("id").asText();
+                "{\"exercise\":\"Bench Press\",\"record_value\":225,\"unit\":\"lbs\",\"achieved_date\":\"2026-03-08\"}")).path("id").asText();
 
         assertStatus(getAs(owner, "/api/v1/personal-records/" + id), 200);
         assertStatus(getAs(other, "/api/v1/personal-records/" + id), 404);

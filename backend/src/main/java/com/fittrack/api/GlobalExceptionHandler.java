@@ -91,6 +91,19 @@ public class GlobalExceptionHandler {
                 e.getName() + " has an invalid value"));
     }
 
+    /**
+     * A required query parameter that was not supplied is a client error.
+     *
+     * <p>Without this, a request such as {@code /calendar/summary?to=...} escapes as an opaque 500
+     * because the exception is not otherwise mapped. A missing bound is a bad request, and saying so
+     * is what lets the calendar contract distinguish an invalid window from a server fault.
+     */
+    @ExceptionHandler(org.springframework.web.bind.MissingServletRequestParameterException.class)
+    ResponseEntity<?> missingParameter(org.springframework.web.bind.MissingServletRequestParameterException e) {
+        return ResponseEntity.badRequest().body(body(400, "Bad Request", "invalid_parameter",
+                e.getParameterName() + " is required"));
+    }
+
     /** A malformed path UUID is a client error and must not reveal whether the id exists. */
     @ExceptionHandler(org.springframework.web.method.annotation.MethodArgumentConversionNotSupportedException.class)
     ResponseEntity<?> conversion(

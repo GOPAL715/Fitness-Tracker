@@ -111,18 +111,7 @@ export default function App() {
 
       {tab === "goals" && <GoalsView goals={app.goals} profile={app.profile} onRefresh={app.reload} />}
 
-      {tab === "calendar" && (
-        <CalendarView
-          metrics={app.metrics}
-          workouts={app.workouts}
-          sessions={app.sessions}
-          meals={app.meals}
-          body={app.body}
-          records={app.records}
-          habits={app.habits}
-          habitLogs={app.habitLogs}
-        />
-      )}
+      {tab === "calendar" && <CalendarView />}
 
       {tab === "profile" && (
         <ProfileView

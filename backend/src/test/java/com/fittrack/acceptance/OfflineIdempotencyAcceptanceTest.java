@@ -142,7 +142,7 @@ class OfflineIdempotencyAcceptanceTest extends AbstractAcceptanceTest {
 
     private Map<String, Object> sessionBody(UUID exercise, String title) {
         return new java.util.LinkedHashMap<>(Map.of(
-                "session", Map.of("title", title, "workout_type", "Strength", "duration_minutes", 45,
+                "session", Map.of("title", title, "workout_type", "Strength", "session_date", java.time.LocalDate.now().toString(), "duration_minutes", 45,
                         "perceived_effort", 7, "completed", true),
                 "exercises", List.of(Map.of("exercise_id", exercise, "order_index", 0,
                         "sets", List.of(Map.of("set_number", 1, "reps", 5, "weight", 60, "completed", true))))));

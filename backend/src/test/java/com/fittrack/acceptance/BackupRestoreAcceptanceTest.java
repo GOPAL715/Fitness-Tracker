@@ -40,7 +40,7 @@ class BackupRestoreAcceptanceTest extends AbstractAcceptanceTest {
         assertThat(applied).allSatisfy(row -> assertThat(row.get("success")).isEqualTo(true));
         // A gap would mean a migration never ran, so the chain must be contiguous.
         assertThat(applied).extracting(row -> String.valueOf(row.get("version")))
-                .containsExactly("1", "2", "3", "4", "5", "6");
+                .containsExactly("1", "2", "3", "4", "5", "6", "7");
     }
 
     /**

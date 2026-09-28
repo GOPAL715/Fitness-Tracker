@@ -301,7 +301,7 @@ class AcceptanceHttpTest {
 
     @Test void directResourceOwnershipMatrixIsComplete() throws Exception {
         Session a=registerSession("direct-a-"); Session b=registerSession("direct-b-");
-        String[][] specs={{"fitness-profile","{\"display_name\":\"A\"}"},{"daily-metrics","{\"metric_date\":\"2026-01-01\",\"steps\":10}"},{"body-metrics","{\"metric_date\":\"2026-01-02\",\"weight_lb\":180}"},{"workouts","{\"title\":\"A workout\"}"},{"workout-sessions","{\"title\":\"A session\"}"},{"workout-templates","{\"name\":\"A template\"}"},{"plan-sessions","{\"day_index\":1,\"title\":\"A plan\"}"},{"personal-records","{\"exercise\":\"A lift\",\"record_value\":10}"},{"goals","{\"title\":\"A goal\",\"start_value\":0,\"target_value\":10,\"status\":\"active\"}"},{"meals","{\"name\":\"A meal\"}"},{"habits","{\"name\":\"A habit\",\"target_per_week\":7}"},{"reminders","{\"title\":\"A reminder\",\"enabled\":true}"},{"health-devices","{\"device_name\":\"Watch\",\"status\":\"Connected\"}"},{"coach-notifications","{\"title\":\"Notice\",\"message\":\"Body\"}"}};
+        String[][] specs={{"fitness-profile","{\"display_name\":\"A\"}"},{"daily-metrics","{\"metric_date\":\"2026-01-01\",\"steps\":10}"},{"body-metrics","{\"metric_date\":\"2026-01-02\",\"weight_lb\":180}"},{"workouts","{\"title\":\"A workout\"}"},{"workout-sessions","{\"title\":\"A session\"}"},{"workout-templates","{\"name\":\"A template\"}"},{"plan-sessions","{\"day_index\":1,\"title\":\"A plan\"}"},{"personal-records","{\"exercise\":\"A lift\",\"record_value\":10,\"achieved_date\":\"2026-01-02\"}"},{"goals","{\"title\":\"A goal\",\"start_value\":0,\"target_value\":10,\"status\":\"active\"}"},{"meals","{\"name\":\"A meal\"}"},{"habits","{\"name\":\"A habit\",\"target_per_week\":7}"},{"reminders","{\"title\":\"A reminder\",\"enabled\":true}"},{"health-devices","{\"device_name\":\"Watch\",\"status\":\"Connected\"}"},{"coach-notifications","{\"title\":\"Notice\",\"message\":\"Body\"}"}};
         for(String[] spec:specs){String resource=spec[0];
         // The fitness profile is a per-account singleton created at registration, so this case
         // reuses that row instead of POSTing a second one.
@@ -313,7 +313,7 @@ class AcceptanceHttpTest {
 
     @Test void compositeSessionRollsBackInvalidCatalogReference() throws Exception {
         Session owner=registerSession("composite-session-"); UUID ex=UUID.randomUUID(); jdbc.update("insert into exercises(id,name) values (?,?)",ex,"Exercise");
-        String body=mapper.writeValueAsString(Map.of("session",Map.of("title","Session","workout_type","Strength","duration_minutes",10,"perceived_effort",7,"completed",true),"exercises",java.util.List.of(Map.of("exercise_id",ex,"order_index",0,"sets",java.util.List.of(Map.of("set_number",1,"reps",8,"weight",100,"completed",true))))));
+        String body=mapper.writeValueAsString(Map.of("session",Map.of("title","Session","workout_type","Strength","session_date",java.time.LocalDate.now().toString(),"duration_minutes",10,"perceived_effort",7,"completed",true),"exercises",java.util.List.of(Map.of("exercise_id",ex,"order_index",0,"sets",java.util.List.of(Map.of("set_number",1,"reps",8,"weight",100,"completed",true))))));
         mvc.perform(post("/api/v1/workout-sessions/complete").header("Authorization","Bearer "+owner.access()).contentType(MediaType.APPLICATION_JSON).content(body)).andExpect(status().isOk());
         UUID bad=UUID.randomUUID(); String invalid=body.replace(ex.toString(),bad.toString());
         mvc.perform(post("/api/v1/workout-sessions/complete").header("Authorization","Bearer "+owner.access()).contentType(MediaType.APPLICATION_JSON).content(invalid)).andExpect(status().isNotFound());
@@ -322,7 +322,7 @@ class AcceptanceHttpTest {
 
     @Test void compositeTemplateAndMealRollbackOnMissingCatalogReference() throws Exception {
         Session owner=registerSession("composite-other-"); UUID ex=UUID.randomUUID(); jdbc.update("insert into exercises(id,name) values (?,?)",ex,"Exercise");
-        String session = mapper.writeValueAsString(Map.of("session", Map.of("title", "Session2", "workout_type", "Strength", "duration_minutes", 10, "perceived_effort", 7, "completed", true), "exercises", java.util.List.of(Map.of("exercise_id", ex, "order_index", 0, "sets", java.util.List.of(Map.of("set_number", 1, "reps", 8, "completed", true))))));
+        String session = mapper.writeValueAsString(Map.of("session", Map.of("title", "Session2", "workout_type", "Strength", "session_date", java.time.LocalDate.now().toString(), "duration_minutes", 10, "perceived_effort", 7, "completed", true), "exercises", java.util.List.of(Map.of("exercise_id", ex, "order_index", 0, "sets", java.util.List.of(Map.of("set_number", 1, "reps", 8, "completed", true))))));
         mvc.perform(post("/api/v1/workout-sessions/complete").header("Authorization","Bearer "+owner.access()).contentType(MediaType.APPLICATION_JSON).content(session)).andExpect(status().isOk());
         String template=mapper.writeValueAsString(Map.of("template",Map.of("name","Template2","workout_type","Strength","estimated_minutes",30,"favorite",false),"exercises",java.util.List.of(Map.of("exercise_id",UUID.randomUUID(),"order_index",0,"target_sets",3,"target_reps","8-12"))));
         mvc.perform(post("/api/v1/workout-templates/complete").header("Authorization","Bearer "+owner.access()).contentType(MediaType.APPLICATION_JSON).content(template)).andExpect(status().isNotFound());
@@ -337,7 +337,7 @@ class AcceptanceHttpTest {
 
     @Test void compositeUserIdIsNeverUsedForOwnership() throws Exception {
         Session a=registerSession("composite-owner-"); Session b=registerSession("composite-other-owner-"); UUID ex=UUID.randomUUID(); jdbc.update("insert into exercises(id,name) values (?,?)",ex,"Exercise");
-        String body=mapper.writeValueAsString(Map.of("user_id",b.id(),"session",Map.of("title","Owned","workout_type","Strength","duration_minutes",10,"perceived_effort",7,"completed",true),"exercises",java.util.List.of(Map.of("exercise_id",ex,"order_index",0,"sets",java.util.List.of(Map.of("set_number",1,"reps",8,"completed",true))))));
+        String body=mapper.writeValueAsString(Map.of("user_id",b.id(),"session",Map.of("title","Owned","workout_type","Strength","session_date",java.time.LocalDate.now().toString(),"duration_minutes",10,"perceived_effort",7,"completed",true),"exercises",java.util.List.of(Map.of("exercise_id",ex,"order_index",0,"sets",java.util.List.of(Map.of("set_number",1,"reps",8,"completed",true))))));
         mvc.perform(post("/api/v1/workout-sessions/complete").header("Authorization","Bearer "+a.access()).contentType(MediaType.APPLICATION_JSON).content(body)).andExpect(status().isOk());
         assertThat(jdbc.queryForObject("select count(*) from workout_sessions where user_id=?::uuid and title='Owned'",Integer.class,a.id()),is(1));
         assertThat(jdbc.queryForObject("select count(*) from workout_sessions where user_id=?::uuid and title='Owned'",Integer.class,b.id()),is(0));
@@ -372,7 +372,7 @@ class AcceptanceHttpTest {
         UUID exercise = UUID.randomUUID();
         jdbc.update("insert into exercises(id,name) values (?,?)", exercise, "Bench Press");
         String body = mapper.writeValueAsString(Map.of(
-                "session", Map.of("title", "Explicit session", "workout_type", "Strength", "duration_minutes", 47, "perceived_effort", 8, "notes", "felt strong", "completed", true),
+                "session", Map.of("title", "Explicit session", "workout_type", "Strength", "session_date", java.time.LocalDate.now().toString(), "duration_minutes", 47, "perceived_effort", 8, "notes", "felt strong", "completed", true),
                 "exercises", List.of(Map.of("exercise_id", exercise, "order_index", 3, "notes", "left side", "sets", List.of(
                         Map.of("set_number", 1, "reps", 8, "weight", "125.50", "rpe", "8.25", "completed", true),
                         Map.of("set_number", 2, "reps", 6, "weight", "130.00", "rpe", "8.50", "completed", true))))));
@@ -492,7 +492,7 @@ class AcceptanceHttpTest {
         jdbc.update("insert into exercises(id,name) values (?,?)", valid, "Valid exercise");
         Map<String, Integer> before = compositeCounts();
         Map<String, Object> body = objectMap(
-                "session", objectMap("title", "Rolled back session", "workout_type", "Strength", "duration_minutes", 30, "perceived_effort", 7, "completed", true),
+                "session", objectMap("title", "Rolled back session", "workout_type", "Strength", "session_date", java.time.LocalDate.now().toString(), "duration_minutes", 30, "perceived_effort", 7, "completed", true),
                 "exercises", java.util.List.of(
                         objectMap("exercise_id", valid, "order_index", 0, "sets", java.util.List.of(objectMap("set_number", 1, "reps", 8, "weight", 100, "completed", true))),
                         objectMap("exercise_id", invalid, "order_index", 1, "sets", java.util.List.of(objectMap("set_number", 1, "reps", 8, "weight", 100, "completed", true)))));
@@ -545,7 +545,7 @@ class AcceptanceHttpTest {
         jdbc.update("insert into exercises(id,name) values (?,?)", exercise, "Shared exercise");
         jdbc.update("insert into foods(id,name,serving_size,calories,protein_g,carbs_g,fat_g,fiber_g) values (?,?,?,?,?,?,?,?)", food, "Shared food", 100, 100, 10, 10, 5, 2);
         Map<String, Integer> before = compositeCounts();
-        String session = mapper.writeValueAsString(objectMap("session", objectMap("title", "A isolation session", "workout_type", "Strength", "duration_minutes", 20, "perceived_effort", 6, "completed", true), "exercises", List.of(objectMap("exercise_id", exercise, "order_index", 0, "sets", List.of(objectMap("set_number", 1, "reps", 8, "completed", true))))));
+        String session = mapper.writeValueAsString(objectMap("session", objectMap("title", "A isolation session", "workout_type", "Strength", "session_date", java.time.LocalDate.now().toString(), "duration_minutes", 20, "perceived_effort", 6, "completed", true), "exercises", List.of(objectMap("exercise_id", exercise, "order_index", 0, "sets", List.of(objectMap("set_number", 1, "reps", 8, "completed", true))))));
         MvcResult sessionResult = mvc.perform(post("/api/v1/workout-sessions/complete").header("Authorization", "Bearer " + a.access()).contentType(MediaType.APPLICATION_JSON).content(session)).andExpect(status().isOk()).andReturn();
         String sessionId = mapper.readTree(sessionResult.getResponse().getContentAsString()).path("id").asText();
         String template = mapper.writeValueAsString(objectMap("template", objectMap("name", "A isolation template", "workout_type", "Strength", "estimated_minutes", 20, "favorite", false), "exercises", List.of(objectMap("exercise_id", exercise, "order_index", 0, "target_sets", 3, "target_reps", "8-12"))));
@@ -574,7 +574,7 @@ class AcceptanceHttpTest {
         jdbc.update("insert into exercises(id,name) values (?,?)", exercise, "Shared exercise");
         jdbc.update("insert into foods(id,name,serving_size,calories,protein_g,carbs_g,fat_g,fiber_g) values (?,?,?,?,?,?,?,?)", food, "Shared food", 100, 100, 10, 10, 5, 2);
         String forged = b.id();
-        Map<String, Object> session = objectMap("user_id", forged, "session", objectMap("title", "Forged session", "workout_type", "Strength", "duration_minutes", 20, "perceived_effort", 6, "completed", true), "exercises", List.of(objectMap("exercise_id", exercise, "order_index", 0, "sets", List.of(objectMap("set_number", 1, "reps", 8, "completed", true)))));
+        Map<String, Object> session = objectMap("user_id", forged, "session", objectMap("title", "Forged session", "workout_type", "Strength", "session_date", java.time.LocalDate.now().toString(), "duration_minutes", 20, "perceived_effort", 6, "completed", true), "exercises", List.of(objectMap("exercise_id", exercise, "order_index", 0, "sets", List.of(objectMap("set_number", 1, "reps", 8, "completed", true)))));
         MvcResult sessionResult = mvc.perform(post("/api/v1/workout-sessions/complete").header("Authorization", "Bearer " + a.access()).contentType(MediaType.APPLICATION_JSON).content(mapper.writeValueAsString(session))).andExpect(status().isOk()).andReturn();
         String sessionId = mapper.readTree(sessionResult.getResponse().getContentAsString()).path("id").asText();
         Map<String, Object> template = objectMap("user_id", forged, "template", objectMap("name", "Forged template", "workout_type", "Strength", "estimated_minutes", 20, "favorite", false), "exercises", List.of(objectMap("exercise_id", exercise, "order_index", 0, "target_sets", 3, "target_reps", "8-12")));
@@ -622,9 +622,9 @@ class AcceptanceHttpTest {
         Map<String, Integer> before = compositeCounts();
         List<Object> invalidPayloads = List.of(
                 objectMap("session", objectMap("title", "Missing type", "duration_minutes", 20, "perceived_effort", 5, "completed", true), "exercises", List.of(objectMap("exercise_id", exercise, "order_index", 0, "sets", List.of(objectMap("set_number", 1, "reps", 8, "completed", true))))),
-                objectMap("session", objectMap("title", "Bad UUID", "workout_type", "Strength", "duration_minutes", 20, "perceived_effort", 5, "completed", true), "exercises", List.of(objectMap("exercise_id", "not-a-uuid", "order_index", 0, "sets", List.of(objectMap("set_number", 1, "reps", 8, "completed", true))))),
-                objectMap("session", objectMap("title", "Empty children", "workout_type", "Strength", "duration_minutes", 20, "perceived_effort", 5, "completed", true), "exercises", List.of()),
-                objectMap("session", objectMap("title", "Bad set", "workout_type", "Strength", "duration_minutes", 20, "perceived_effort", 5, "completed", true), "exercises", List.of(objectMap("exercise_id", exercise, "order_index", 0, "sets", List.of(objectMap("set_number", 0, "reps", 8, "completed", true))))));
+                objectMap("session", objectMap("title", "Bad UUID", "workout_type", "Strength", "session_date", java.time.LocalDate.now().toString(), "duration_minutes", 20, "perceived_effort", 5, "completed", true), "exercises", List.of(objectMap("exercise_id", "not-a-uuid", "order_index", 0, "sets", List.of(objectMap("set_number", 1, "reps", 8, "completed", true))))),
+                objectMap("session", objectMap("title", "Empty children", "workout_type", "Strength", "session_date", java.time.LocalDate.now().toString(), "duration_minutes", 20, "perceived_effort", 5, "completed", true), "exercises", List.of()),
+                objectMap("session", objectMap("title", "Bad set", "workout_type", "Strength", "session_date", java.time.LocalDate.now().toString(), "duration_minutes", 20, "perceived_effort", 5, "completed", true), "exercises", List.of(objectMap("exercise_id", exercise, "order_index", 0, "sets", List.of(objectMap("set_number", 0, "reps", 8, "completed", true))))));
         for (Object payload : invalidPayloads) assertStructuredBadRequest(postJson(owner, "/api/v1/workout-sessions/complete", payload));
         assertNoCompositeGrowth(before);
     }
@@ -650,7 +650,7 @@ class AcceptanceHttpTest {
         Session b = registerSession("composite-foreign-b-");
         UUID exercise = UUID.randomUUID();
         jdbc.update("insert into exercises(id,name) values (?,?)", exercise, "Catalog exercise");
-        MvcResult sessionResult = postJson(b, "/api/v1/workout-sessions/complete", objectMap("session", objectMap("title", "B source", "workout_type", "Strength", "duration_minutes", 20, "perceived_effort", 6, "completed", true), "exercises", List.of(objectMap("exercise_id", exercise, "order_index", 0, "sets", List.of(objectMap("set_number", 1, "reps", 8, "completed", true))))));
+        MvcResult sessionResult = postJson(b, "/api/v1/workout-sessions/complete", objectMap("session", objectMap("title", "B source", "workout_type", "Strength", "session_date", java.time.LocalDate.now().toString(), "duration_minutes", 20, "perceived_effort", 6, "completed", true), "exercises", List.of(objectMap("exercise_id", exercise, "order_index", 0, "sets", List.of(objectMap("set_number", 1, "reps", 8, "completed", true))))));
         UUID sessionId = UUID.fromString(mapper.readTree(sessionResult.getResponse().getContentAsString()).path("id").asText());
         UUID sessionChild = jdbc.queryForObject("select id from workout_exercises where workout_session_id=?", UUID.class, sessionId);
         MvcResult templateResult = postJson(b, "/api/v1/workout-templates/complete", objectMap("template", objectMap("name", "B template", "workout_type", "Strength", "estimated_minutes", 20, "favorite", false), "exercises", List.of(objectMap("exercise_id", exercise, "order_index", 0, "target_sets", 3, "target_reps", "8-12"))));
@@ -662,7 +662,7 @@ class AcceptanceHttpTest {
         UUID mealId = UUID.fromString(mapper.readTree(mealResult.getResponse().getContentAsString()).path("id").asText());
         UUID mealChild = jdbc.queryForObject("select id from meal_items where meal_id=?", UUID.class, mealId);
         Map<String, Integer> before = compositeCounts();
-        assertThat(postJson(a, "/api/v1/workout-sessions/complete", objectMap("session", objectMap("title", "A foreign", "workout_type", "Strength", "duration_minutes", 20, "perceived_effort", 6, "completed", true), "exercises", List.of(objectMap("exercise_id", sessionChild, "order_index", 0, "sets", List.of(objectMap("set_number", 1, "reps", 8, "completed", true)))))).getResponse().getStatus(), is(404));
+        assertThat(postJson(a, "/api/v1/workout-sessions/complete", objectMap("session", objectMap("title", "A foreign", "workout_type", "Strength", "session_date", java.time.LocalDate.now().toString(), "duration_minutes", 20, "perceived_effort", 6, "completed", true), "exercises", List.of(objectMap("exercise_id", sessionChild, "order_index", 0, "sets", List.of(objectMap("set_number", 1, "reps", 8, "completed", true)))))).getResponse().getStatus(), is(404));
         assertThat(postJson(a, "/api/v1/workout-templates/complete", objectMap("template", objectMap("name", "A foreign", "workout_type", "Strength", "estimated_minutes", 20, "favorite", false), "exercises", List.of(objectMap("exercise_id", templateChild, "order_index", 0, "target_sets", 3, "target_reps", "8-12")))).getResponse().getStatus(), is(404));
         assertThat(postJson(a, "/api/v1/meals/complete", objectMap("meal", objectMap("meal_date", LocalDate.now(), "meal_type", "LUNCH", "name", "A foreign", "source", "manual"), "items", List.of(objectMap("food_id", mealChild, "grams", 100, "quantity", 1)))).getResponse().getStatus(), is(404));
         assertNoCompositeGrowth(before);
