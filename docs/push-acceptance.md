@@ -1,0 +1,241 @@
+# Production Web Push acceptance runbook
+
+**This is a manual acceptance procedure. It has not been executed automatically.**
+
+Phase 14 could not perform a real browser-to-push-service test: the development environment has no
+browser automation, no VAPID credentials, no HTTPS origin and no deployable target. Everything in
+this document describes a procedure **a human must perform against a real deployment**. Nothing here
+has been verified end to end, and no result should be recorded until someone has actually run it.
+
+What *has* been verified deterministically is listed in
+[What is already covered](#7-what-is-already-covered-automated).
+
+---
+
+## 1. Prerequisites
+
+| Requirement | Why |
+|---|---|
+| A deployed FitTrack reachable over **HTTPS** | The Push API is unavailable in an insecure context. `http://localhost` counts as secure for development; any other host does not. |
+| A real browser (Chrome, Edge, Firefox, or Safari 16.4+) | `PushManager` and service-worker push are required. |
+| A push service endpoint | The browser registers with FCM, Mozilla or WNS depending on browser. |
+| Database access to the deployment | To verify subscription rows and the delivery ledger. |
+| Log access to the backend | To confirm observability fields and the absence of secrets. |
+| A user account | Push subscriptions are always owned by an authenticated user. |
+
+## 2. Generate and store VAPID credentials
+
+Generate **once** per deployment and store in your secret manager. Regenerating invalidates every
+existing subscription, so all devices must re-enable notifications afterwards.
+
+```bash
+# Prints the private key on stdout; keep it only in the secret manager.
+openssl ecparam -genkey -name prime256v1 -noout | openssl ec -pubout
+```
+
+Strip the PEM armour and newlines to get the base64url values the application expects.
+
+**Never** commit these. Never prefix them with `VITE_` - Vite inlines every `VITE_` variable into the
+browser bundle, which would publish the private key to every client.
+
+## 3. Required environment variables
+
+| Variable | Example | Notes |
+|---|---|---|
+| `FITTRACK_PUSH_ENABLED` | `true` | Master switch. Default `false`. |
+| `FITTRACK_VAPID_SUBJECT` | `mailto:ops@your-domain.example` | `mailto:` or `https:`. Operator contact, never a user's address. |
+| `FITTRACK_VAPID_PUBLIC_KEY` | *(base64url, 65 bytes)* | The only VAPID value the browser ever receives. |
+| `FITTRACK_VAPID_PRIVATE_KEY` | *(base64url, 32 bytes)* | Server-side only. Signs the VAPID JWT. |
+| `RATE_LIMIT_PUSH_REQUESTS` | `20` | Optional. Subscription writes per user per window. |
+| `RATE_LIMIT_PUSH_WINDOW` | `60` | Optional. Window in seconds. |
+
+`docker-compose.yml` and `.env.example` both pass these through for local work. Push stays **off** by
+default, so a deployment that sets nothing behaves exactly as it did before push existed.
+
+## 4. Expected startup behaviour by configuration
+
+Startup must never fail because of push. Verify the log line at boot:
+
+| Configuration | Expected startup log | Delivery behaviour |
+|---|---|---|
+| Disabled (`FITTRACK_PUSH_ENABLED=false`) | `web_push_disabled reason=app_push_enabled_false` | Occurrences close `failed` via the existing permanent-failure path. |
+| Enabled, complete VAPID | `web_push_ready channel=web-push subject=...` | Real delivery. |
+| Enabled, missing private key | `web_push_disabled reason=incomplete_vapid_configuration missing=private-key` | Same as disabled. |
+| Enabled, malformed key | `web_push_ready`, then `web_push_configuration_invalid` on first delivery | Occurrences close `failed`; no crash. |
+| Enabled, invalid subject | Push service rejects with 401/403; logged as `classification=temporary` | Retried; subscriptions are **not** deleted. |
+
+`GET /api/v1/push/config` returns `{"enabled": <bool>, "publicKey": "..."}`. `enabled` is true only
+when the switch is on **and** the VAPID triple is complete.
+
+## 5. Rate limiting
+
+Subscription writes (`POST` and `DELETE /api/v1/push/subscriptions`) use a dedicated per-user
+bucket, default 20 requests per 60 seconds, separate from the general API allowance. `GET
+/api/v1/push/config` and `GET /api/v1/push/subscriptions` stay on the general API bucket, since they
+are cheap reads. Exceeding the push limit returns the project's existing rate-limit response.
+
+
+
+---
+
+## 6. Acceptance procedure
+
+Record the actual result of each step. A step that was not performed must be marked **NOT RUN**.
+
+### 6.1 Login and enable notifications
+
+1. Sign in to FitTrack over HTTPS.
+2. Go to **Profile**.
+3. Find **Reminder notifications**. The explanatory text should describe the current state.
+4. Click **Enable reminders**.
+
+The permission prompt appears **only** at this point. FitTrack never prompts on page load, by design:
+an unprompted permission request is usually treated as untrustworthy and blocked.
+
+- **PASS** if the browser prompt appears and you choose **Allow**.
+- **FAIL** if a prompt appears on page load before you clicked anything.
+
+### 6.2 Verify the subscription was stored
+
+```sql
+SELECT id, user_id, endpoint, created_at, updated_at
+FROM push_subscriptions
+ORDER BY created_at DESC
+LIMIT 5;
+```
+
+- **PASS** if a row exists for the signed-in user, with an `endpoint` on a known push-service host.
+- Confirm `p256dh` and `auth_secret` are populated. **Never paste their values into a ticket.**
+
+### 6.3 Create a short-lived reminder
+
+The scheduler interval is `app.reminders.scheduler.interval` (default `PT60S`), so a reminder due
+within a minute or two is processed on the next tick. For faster feedback set
+`REMINDER_SCHEDULER_INTERVAL=PT15S` for the acceptance window and restore it afterwards.
+
+1. Create a reminder due in 1-2 minutes.
+2. Confirm the stored occurrence:
+   ```sql
+   SELECT id, title, next_occurrence_at, delivery_status
+   FROM reminders
+   WHERE id = '<reminder id>';
+   ```
+
+### 6.4 Wait for the scheduler
+
+Wait one full interval plus a margin (about 90 seconds at the default 60s interval).
+
+### 6.5 Verify the delivery ledger
+
+```sql
+SELECT occurrence_at, state, attempts, last_error, delivered_at
+FROM reminder_deliveries
+WHERE reminder_id = '<reminder id>'
+ORDER BY created_at DESC;
+```
+
+- **PASS** if exactly **one** row exists with `state = 'delivered'` and a non-null `delivered_at`.
+- **FAIL (duplicate)** if more than one row exists for the same `occurrence_at`. The unique key on
+  `(reminder_id, occurrence_at)` prevents this; a duplicate is a serious defect.
+
+### 6.6 Verify the browser notification
+
+With the browser running (the tab may be closed):
+
+- **PASS** if exactly one notification appears within a few seconds of the ledger row.
+- **FAIL (missing)** if none appears. Check for `web_push_attempt` lines in the log first.
+- **FAIL (duplicate)** if more than one appears for a single occurrence.
+
+### 6.7 Verify notification click
+
+Click the notification.
+
+- **PASS** if the FitTrack window is focused, or opens at the FitTrack root when none existed.
+- Note: FitTrack currently has **no URL-based SPA routing or reminder detail route**. Notification
+  clicks therefore open/focus the FitTrack root rather than deep-linking to a specific reminder.
+  Reminder deep-linking is a future feature, out of scope for Phase 14.
+- **FAIL (security)** if the browser navigates to any external site. That would be an open-redirect
+  defect: stop and report it immediately.
+
+### 6.8 Verify duplicate suppression
+
+Trigger another occurrence of the same reminder. Confirm exactly one further notification and one
+further ledger row for the new `occurrence_at`. Re-processing an already-claimed occurrence must be a
+no-op, logged as `web_push_delivery_skipped ... reason=already_claimed`.
+
+### 6.9 Disable and re-enable
+
+1. Click **Turn off on this device** in **Profile**.
+2. **PASS** if the row disappears from `push_subscriptions` and the button reads **Enable reminders**.
+3. Click **Enable reminders** again: confirm a single row returns, not a duplicate.
+4. Repeating the disable must be safe - the API returns `{"removed": false}`, not an error.
+
+### 6.10 Verify expired/invalid subscription cleanup
+
+Invalidate a subscription so the push service rejects it permanently - removing the service worker
+registration in the browser's application storage, or unregistering it in developer tools, then
+triggering a reminder.
+
+- **PASS** if the log shows `web_push_attempt ... status=410 ... classification=permanent` followed by
+  `web_push_subscription_removed reason=expired_or_invalid`, and the row is gone from the table.
+- **PASS** if the occurrence is recorded `failed` with **no retry**, per existing permanent-failure
+  semantics.
+- **FAIL** if a 404/410 led to a retry, or if a 429/5xx led to a subscription being deleted.
+
+### 6.11 Log and secret verification
+
+Fetch backend logs covering the test window and confirm:
+
+- Every attempt logs `web_push_attempt` with `subscription_id`, `host`, `status`, `transport`,
+  `classification` and `duration_ms`.
+- Failure statuses are distinguishable: `404` vs `410` vs `429` vs `5xx` vs `transport=timeout`.
+- Delivery summaries carry `reminder_id`, `user_id` and `occurrence_at`.
+- **No log line contains** a push endpoint path, a `p256dh` value, an auth secret, the VAPID private
+  key, a JWT, an access token or a refresh token.
+
+  ```bash
+  # The endpoint host is expected; nothing after the host path should appear.
+  grep -E 'fcm\.googleapis\.com/fcm/send/[A-Za-z0-9_-]{20,}' app.log   # expect no match
+  grep -E 'BEGIN (EC )?PRIVATE KEY' app.log                             # expect no match
+  ```
+
+---
+
+## 7. Troubleshooting
+
+| Symptom | Likely cause | Action |
+|---|---|---|
+| `web_push_disabled reason=incomplete_vapid_configuration` | A VAPID variable is empty | Check all four are set on the running container, then restart. |
+| `web_push_configuration_invalid` at delivery | Keys malformed or mismatched | Regenerate the pair; never combine a public key from one pair with a private key from another. |
+| No `web_push_attempt` lines | Scheduler off, or nothing due | Confirm `REMINDER_SCHEDULER_ENABLED` and that `next_occurrence_at` is in the past. |
+| `web_push_no_subscriptions` | The browser never registered | Re-run 6.1; check the browser console for `subscribe()` errors. |
+| `classification=temporary` with `status=401`/`403` | Push service rejected the VAPID key | Confirm the subject is `mailto:`/`https:` and the pair is the one the browser was given. |
+| No notification though ledger says delivered | Browser-level suppression | Check OS notification settings, Do Not Disturb, and any silenced-site list. |
+| `status=timeout` repeatedly | Push service unreachable from the deployment | Check egress rules from the backend network. |
+| Subscription removed unexpectedly | A 404/410 was returned | Confirm the browser did not unregister the service worker. |
+| `429` from the push service | Provider rate limit | Wait out the window; correctly temporary, not retried aggressively. |
+| 429 from FitTrack on subscribe | Push write bucket exhausted | Expected above 20 writes/min; wait a minute. Browsers do not normally retry this fast. |
+
+## 8. What is already covered (automated)
+
+These are exercised deterministically in CI and do **not** need repeating manually:
+
+- VAPID key loading, and a real RFC 8291 encryption plus VAPID JWT request build.
+- Classification of 200/201/202/204, 404, 410, 429, 5xx, and unrecognised statuses.
+- Endpoint validation including SSRF targets: `localhost`, `127.0.0.1`, `169.254.169.254`, RFC 1918,
+  non-HTTPS and non-push hosts.
+- Subscription registration, idempotency, ownership enforcement, deletion, and that no endpoint
+  ever returns `p256dh` or the auth secret.
+- The push rate-limit bucket: POST and DELETE are limited per user, ordinary API traffic is not,
+  and the limit produces the existing rate-limit response.
+- Browser permission flow: support checks never prompt, denied permission, existing subscription
+  reuse, and unsubscribe.
+- The notification-click destination (app root) and that a payload cannot influence navigation.
+
+## 9. Expected results summary
+
+A pass requires: notification enabled via an explicit click; exactly one subscription row; exactly
+one `delivered` ledger row per occurrence; exactly one browser notification per occurrence; a
+click that focuses or opens FitTrack at the root and never navigates externally; 404/410 removing
+the subscription without retry; 429/5xx/timeouts retried without removing it; and no secret
+material in any log line.

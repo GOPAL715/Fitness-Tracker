@@ -30,6 +30,7 @@ public class SecurityHeadersRateLimitFilter extends OncePerRequestFilter {
     private final int aiLimit, aiWindowSeconds;
     private final int coachLimit, coachWindowSeconds;
     private final int healthLimit, healthWindowSeconds;
+    private final int pushLimit, pushWindowSeconds;
 
     public SecurityHeadersRateLimitFilter(RateLimitService limiter,
             @Value("${app.production:false}") boolean production,
@@ -42,7 +43,9 @@ public class SecurityHeadersRateLimitFilter extends OncePerRequestFilter {
             @Value("${app.rate-limit.coach-requests:20}") int coachLimit,
             @Value("${app.rate-limit.coach-window-seconds:60}") int coachWindow,
             @Value("${app.rate-limit.health-requests:60}") int healthLimit,
-            @Value("${app.rate-limit.health-window-seconds:60}") int healthWindow) {
+            @Value("${app.rate-limit.health-window-seconds:60}") int healthWindow,
+            @Value("${app.rate-limit.push-requests:20}") int pushLimit,
+            @Value("${app.rate-limit.push-window-seconds:60}") int pushWindow) {
         this.limiter = limiter;
         this.production = production;
         this.authLimit = authLimit;
@@ -55,6 +58,8 @@ public class SecurityHeadersRateLimitFilter extends OncePerRequestFilter {
         this.coachWindowSeconds = coachWindow;
         this.healthLimit = healthLimit;
         this.healthWindowSeconds = healthWindow;
+        this.pushLimit = pushLimit;
+        this.pushWindowSeconds = pushWindow;
     }
 
     @Override
@@ -110,6 +115,22 @@ public class SecurityHeadersRateLimitFilter extends OncePerRequestFilter {
         if (authenticated && path.startsWith("/api/v1/health/")) {
             return limiter.hit("health", authentication.getName(), healthLimit,
                     Duration.ofSeconds(healthWindowSeconds), false);
+        }
+
+        // Phase 14: push subscription registration is a write path, and it is the one place a
+        // browser can be talked into calling repeatedly. It gets its own bucket rather than sharing
+        // the general API allowance, so a tighter limit can be applied without changing ordinary
+        // read traffic.
+        //
+        // Matched on the write methods deliberately. Matching the path alone would leave
+        // GET /api/v1/push/config through the general bucket while POST and DELETE were limited here,
+        // which is inconsistent; and matching only POST would let a client bypass the limit by
+        // sending the delete as a GET-shaped request. The config endpoint is a cheap read and is
+        // excluded below so the budget covers the operations that actually write.
+        if (authenticated && path.startsWith("/api/v1/push/subscriptions")
+                && ("POST".equals(request.getMethod()) || "DELETE".equals(request.getMethod()))) {
+            return limiter.hit("push", authentication.getName(), pushLimit,
+                    Duration.ofSeconds(pushWindowSeconds), false);
         }
 
         // AI and scanner traffic is expensive; it gets its own tighter bucket keyed by user.

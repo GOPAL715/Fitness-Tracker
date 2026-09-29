@@ -153,17 +153,22 @@ public class WebPushDeliveryProvider implements NotificationDeliveryProvider {
         }
 
         if (delivered > 0) {
-            log.info("web_push_delivered reminder_id={} delivered={} permanent={} temporary={}",
-                    request.reminderId(), delivered, permanentFailures, temporaryFailures);
+            // Phase 14: the occurrence and the user are named here so a delivery can be traced from a
+            // single log line to the exact scheduled event and the account it was for. Neither is
+            // sensitive: both are opaque identifiers the user already owns.
+            log.info("web_push_delivered reminder_id={} user_id={} occurrence_at={} delivered={}"
+                            + " permanent={} temporary={}",
+                    request.reminderId(), request.userId(), request.occurrence(),
+                    delivered, permanentFailures, temporaryFailures);
             return Outcome.DELIVERED;
         }
         if (temporaryFailures > 0) {
-            log.warn("web_push_temporary_failure reminder_id={} subscriptions={}",
-                    request.reminderId(), targets.size());
+            log.warn("web_push_temporary_failure reminder_id={} user_id={} occurrence_at={} subscriptions={}",
+                    request.reminderId(), request.userId(), request.occurrence(), targets.size());
             return Outcome.TEMPORARY_FAILURE;
         }
-        log.warn("web_push_all_subscriptions_invalid reminder_id={} removed={}",
-                request.reminderId(), permanentFailures);
+        log.warn("web_push_all_subscriptions_invalid reminder_id={} user_id={} occurrence_at={} removed={}",
+                request.reminderId(), request.userId(), request.occurrence(), permanentFailures);
         return Outcome.PERMANENT_FAILURE;
     }
 
@@ -176,6 +181,11 @@ public class WebPushDeliveryProvider implements NotificationDeliveryProvider {
      */
     private Outcome send(PushService pushService, String payload,
             PushSubscriptionService.DeliverableSubscription target) {
+        // Phase 14: per-attempt timing, measured around the single provider call rather than the
+        // whole tick, so an operator can tell a slow push service from a slow database. The delivery
+        // decision is unchanged by this; the measurement is purely observational.
+        long startedAt = System.nanoTime();
+        int status;
         try {
             Subscription subscription = new Subscription(target.endpoint(),
                     new Subscription.Keys(target.p256dh(), target.authSecret()));
@@ -207,23 +217,65 @@ public class WebPushDeliveryProvider implements NotificationDeliveryProvider {
                     return null;
                 });
                 pending.get(ATTEMPT_TIMEOUT.toSeconds(), TimeUnit.SECONDS);
-                return classify(statusOf(captured.response));
+                status = statusOf(captured.response);
             } finally {
                 caller.shutdownNow();
             }
         } catch (TimeoutException e) {
+            logAttempt(target, -1, elapsedMs(startedAt), "timeout");
             return Outcome.TEMPORARY_FAILURE;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+            logAttempt(target, -1, elapsedMs(startedAt), "interrupted");
             return Outcome.TEMPORARY_FAILURE;
         } catch (Exception e) {
             // A send that never completed says nothing about the subscription's validity. Some push
             // services also use a connection failure to signal a dead endpoint, so this stays
             // temporary and the occurrence is retried rather than closed.
-            log.warn("web_push_send_error subscription_id={} exception_type={}",
-                    target.id(), e.getClass().getSimpleName());
+            logAttempt(target, -1, elapsedMs(startedAt), "network_error");
+            log.warn("web_push_send_error subscription_id={} exception_type={} duration_ms={}",
+                    target.id(), e.getClass().getSimpleName(), elapsedMs(startedAt));
             return Outcome.TEMPORARY_FAILURE;
         }
+        Outcome outcome = classify(status);
+        logAttempt(target, status, elapsedMs(startedAt), null);
+        return outcome;
+    }
+
+    private static long elapsedMs(long startedAtNanos) {
+        return Math.max(0, (System.nanoTime() - startedAtNanos) / 1_000_000L);
+    }
+
+    /**
+     * Records what the push service actually answered for one subscription.
+     *
+     * <p>Phase 14 added this because an operator previously could not tell a 429 from a 503, or a 404
+     * from a 410: every failure produced the same line. The status, the resulting classification and
+     * the attempt duration are now all visible.
+     *
+     * <p>Only the subscription id and host are logged. The endpoint path holds a per-installation
+     * secret and the subscription keys are the decrypting half of the subscription, so neither is
+     * ever written to a log.
+     *
+     * @param transport the failure kind when there was no HTTP response at all, otherwise null
+     */
+    private void logAttempt(PushSubscriptionService.DeliverableSubscription target,
+            int status, long durationMs, String transport) {
+        log.info("web_push_attempt subscription_id={} host={} status={} transport={} classification={}"
+                        + " duration_ms={}",
+                target.id(), hostOf(target.endpoint()), status < 0 ? "none" : status,
+                transport == null ? "http" : transport,
+                // A transport failure is always temporary: nothing was learned about the subscription.
+                transport != null ? "temporary" : classificationName(status),
+                durationMs);
+    }
+
+    /** The outcome name for a status, so a log line states why a decision was made. */
+    private static String classificationName(int status) {
+        Outcome outcome = classify(status);
+        if (outcome == Outcome.DELIVERED) return "delivered";
+        if (outcome == Outcome.PERMANENT_FAILURE) return "permanent";
+        return "temporary";
     }
 
     /**

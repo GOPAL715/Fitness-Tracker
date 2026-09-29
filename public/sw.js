@@ -52,9 +52,21 @@ self.addEventListener("message", (event) => {
 // parsed defensively, and a click never navigates to a URL the payload supplies. safePath below is
 // what makes an open redirect impossible here.
 
+/**
+ * The in-app destination for a tapped notification.
+ *
+ * FitTrack has no URL-based SPA routing and no reminder detail route: navigation is a React
+ * `useState<Tab>` and the app never reads the URL path. A payload-supplied path such as
+ * /reminders/{id} therefore cannot deep-link anywhere - it would simply open the default tab - so
+ * producing one would imply a capability that does not exist. The app root is returned instead.
+ *
+ * Reminder deep-linking is a possible future feature, out of scope for Phase 14. Until it exists, a
+ * tap opens or focuses FitTrack, which is the behaviour the product can actually honour. The id is
+ * still validated so a malformed or hostile payload cannot influence this function's result at all.
+ */
 function safePath(reminderId) {
   if (typeof reminderId !== "string" || !/^[0-9a-fA-F-]{1,64}$/.test(reminderId)) return "/";
-  return `/reminders/${reminderId}`;
+  return "/";
 }
 
 function readPushPayload(event) {

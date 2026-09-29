@@ -113,6 +113,12 @@ app:
     # rather than by device: one user with several Android devices is still one client.
     health-requests: ${RATE_LIMIT_HEALTH_REQUESTS:60}
     health-window-seconds: ${RATE_LIMIT_HEALTH_WINDOW:60}
+    # Phase 14. Push subscription registration and removal are user-triggered writes to PostgreSQL and
+    # get their own bucket rather than sharing the general API allowance, so a tighter limit can be
+    # applied without changing ordinary read traffic. Keyed by user, so one account cannot exhaust
+    # another's budget. See docs/push-acceptance.md.
+    push-requests: ${RATE_LIMIT_PUSH_REQUESTS:20}
+    push-window-seconds: ${RATE_LIMIT_PUSH_WINDOW:60}
     # When true the limiter uses Redis for shared state across instances. With Redis configured but
     # unreachable, authentication limits fail closed and general API limits fail open.
     redis-enabled: ${RATE_LIMIT_REDIS_ENABLED:false}

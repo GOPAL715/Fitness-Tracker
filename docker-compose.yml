@@ -48,6 +48,14 @@ services:
       AI_BASE_URL: ${AI_BASE_URL:-https://api.openai.com/v1}
       AI_VISION_MODEL: ${AI_VISION_MODEL:-gpt-4o-mini}
       AI_TEXT_MODEL: ${AI_TEXT_MODEL:-gpt-4o-mini}
+      # Web Push (Phase 13/14). Passed through by reference so the local stack can exercise a real
+      # push service without a secret ever being written into this file. Every value defaults to
+      # empty and push defaults to false, so a developer with no VAPID pair gets exactly the previous
+      # behaviour: reminders schedule, and delivery closes through the permanent-failure path.
+      FITTRACK_PUSH_ENABLED: ${FITTRACK_PUSH_ENABLED:-false}
+      FITTRACK_VAPID_SUBJECT: ${FITTRACK_VAPID_SUBJECT:-}
+      FITTRACK_VAPID_PUBLIC_KEY: ${FITTRACK_VAPID_PUBLIC_KEY:-}
+      FITTRACK_VAPID_PRIVATE_KEY: ${FITTRACK_VAPID_PRIVATE_KEY:-}
     ports:
       - "${BACKEND_PORT:-8080}:8080"
     volumes:
