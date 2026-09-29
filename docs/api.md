@@ -118,6 +118,123 @@ masking it, because a partial endpoint is still a secret fragment.
 > records to the real delivery ledger, so a test send would either pollute the user's reminder history
 > or require a new delivery path outside this phase's scope.
 
+## Notification preferences
+
+```
+GET /api/v1/notification-preferences
+PUT /api/v1/notification-preferences
+```
+
+User-level notification settings, one row per account. These are **preferences the user set**, and
+they are deliberately not the same thing as anything the server can observe about a browser.
+
+```json
+{
+  "pushEnabled": true,
+  "reminderNotificationsEnabled": true,
+  "quietHoursEnabled": true,
+  "quietHoursStart": "22:00",
+  "quietHoursEnd": "07:00",
+  "timezone": "Asia/Kolkata"
+}
+```
+
+Both routes are authenticated and scoped to the JWT principal. There is no path parameter and no
+`user_id` is read from the body, so a client that posts one has it ignored — the same property the
+push subscription routes have. A read never writes: a user who has never opened the settings screen
+reports the defaults and accumulates no row.
+
+`timezone` is `null` until the user chooses one. That is a real answer, not a missing value: quiet
+hours resolve a **wall-clock** window, and defaulting an unset zone to UTC would silently place
+someone's night in the wrong hours.
+
+### What is deliberately not stored here
+
+| Not stored | Why |
+|---|---|
+| Browser permission | `Notification.permission` is the browser's answer to the user. The server cannot read it and must not be told. |
+| Push subscriptions | `push_subscriptions` already owns devices. Duplicating them would create a second source of truth for a multi-device fact. |
+| Delivery state | `reminder_deliveries` is the ledger. A preference says what should be *attempted*, never what happened. |
+
+### Turning preferences off does not unsubscribe anything
+
+Disabling a preference suppresses **future delivery only**. It does not delete a `push_subscriptions`
+row and does not pause or delete a reminder. A user who mutes reminders on their phone and later
+wants them back has lost nothing.
+
+### Reminder state and user preference are independent
+
+Neither is derived from the other, and neither is ever mutated to represent the other:
+
+| User preference | Reminder | Result |
+|---|---|---|
+| `pushEnabled: false` | `enabled: true` | Reminder stays enabled and is never deleted. The occurrence is skipped. |
+| `pushEnabled: true` | `enabled: false` | Nothing is delivered. Permissive preferences do not resurrect a paused reminder. |
+
+### Policy suppression is not a delivery failure
+
+A reminder deliberately not sent is recorded as its own ledger state, `skipped_policy`, with **no**
+`last_error` and **no** `failure_category`.
+
+This is deliberately distinct from every Phase 17 category. `NO_SUBSCRIPTION` means "you have no
+registered device", which would be false for a user who chose silence. `TEMPORARY_PROVIDER_ERROR`
+and friends mean something failed and was retried; nothing failed here. A user turning notifications
+off is not a provider fault, and the history must not say it is.
+
+`skipped_policy` uses the `state` column only. `FailureCategory` is unchanged and a skipped
+occurrence never receives one.
+
+### Quiet hours
+
+A wall-clock window in the user's own stored timezone, evaluated with `java.time` only. The server's
+zone is never consulted and no UTC offset is ever added or subtracted by hand.
+
+- The window is **half-open, `[start, end)`**. `22:00 → 07:00` means 22:00:00 through 06:59:59.
+- `end <= start` is an **overnight** window that rolls past midnight into the next local day.
+- `start == end` is **rejected** with `400`. It is ambiguous between "no quiet hours" and "all day",
+  and there is no safe reading.
+- Enabling quiet hours **requires** a valid IANA timezone. A zone is never defaulted.
+- An unusable timezone is rejected, never canonicalised into a guess.
+
+**Daylight saving** is handled by `ZonedDateTime.atZone` against the local date, so the JVM's own
+transition rules apply and a wall-clock window keeps its meaning across a transition. A start that
+falls in a spring-forward gap moves to the first instant that actually exists locally.
+
+### What happens to a reminder due during quiet hours
+
+It is **deferred**, not dropped and not failed:
+
+1. The occurrence is **not claimed**. The unique key on `(reminder_id, occurrence_at)` is left
+   untouched, so the occurrence can still be delivered.
+2. `next_occurrence_at` is moved to the instant the window closes. The schedule advances no further,
+   so the reminder is not offered a second, different occurrence.
+3. On the next tick the occurrence is delivered exactly once.
+
+A deferral is therefore invisible in the ledger until it actually delivers — the reminder is simply
+not yet due. This is what keeps a deferral from consuming the retry budget or generating a duplicate.
+
+Because the window's end instant is itself outside the window, a deferral always terminates: the
+occurrence becomes eligible exactly at the resume instant and is delivered on the following tick.
+
+The occurrence that eventually records is the deferred one, timestamped at the instant it became
+deliverable — the deterministic quiet-hours end, not the originally scheduled time the user asked
+not to be woken at.
+
+A **disabled preference takes precedence** over quiet hours, and suppresses rather than defers. A
+user who muted everything entirely should not have reminders queued for their morning.
+
+### The existing `reminders.quiet_hours_start` / `quiet_hours_end` columns
+
+These have existed since `V1` and are user-writable, but **they are not enforced anywhere**:
+`dueReminders` does not select them, `deliver` never reads them, and the Web Push provider never
+sees them. A user can set quiet hours on an individual reminder today and a notification will still
+arrive inside that window.
+
+Phase 19 **does not activate, migrate or reinterpret them.** Doing so would silently change delivery
+behaviour for every existing user who has one set, with no migration, no consent and no release
+note. The two features are independent: the columns remain a per-reminder field with no effect, and
+the preferences table is the only enforced quiet-hours mechanism.
+
 ## Reminder delivery history
 
 ```

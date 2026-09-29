@@ -304,7 +304,33 @@ service accepts a registration, or that a notification is actually displayed.
 
 - **A configured server does not mean a subscribed device.** They are separate rows on the screen.
 - **Permission can be granted with no subscription**, and vice versa. Both are shown independently.
-- **Disabling is per device.** There is no account-wide switch, by design.
+- **Disabling is per device.** The enable/disable buttons act on this browser only.
 - **A blocked permission cannot be cleared by the app.** Only the browser can do it, and the screen says so.
 - **No "send a test notification" button exists.** See the deferral note in
   [api.md](api.md#notification-settings-and-push-semantics).
+
+
+## 12. Manual verification of notification preferences (Phase 19)
+
+**Not yet performed.** Same limitation as the section above: the automated tests exercise the
+preference API, the quiet-hours arithmetic and the suppression path against a real PostgreSQL, but no
+real deployment has been driven through a real night. The parts that genuinely need a human are the
+ones a container cannot judge: whether a user recognises the window as their own.
+
+| # | Step | Expected result |
+|---|---|---|
+| 1 | Open Profile, then **Notification settings** | `Your preferences` appears as its own card, below the browser/server/device cards. |
+| 2 | Inspect the initial state | Reminder notifications and Push notifications are both on; Quiet hours is off. |
+| 3 | Confirm the cards do not merge | The preference switches are separate from Browser support, Server configuration and This device. |
+| 4 | Turn **Push notifications** off, save | The save is confirmed. `push_subscriptions` still holds this device's row. |
+| 5 | Trigger a due reminder | Nothing is sent. History shows `skipped_policy` with no error and no failure category. |
+| 6 | Inspect the reminder | It is still `enabled`. Nothing was paused or deleted. |
+| 7 | Turn **Push notifications** back on | Reminders resume on the next occurrence. |
+| 8 | Turn **Quiet hours** on with no timezone | The screen explains a timezone is required and refuses to save. |
+| 9 | Set `22:00` to `07:00` with `Asia/Kolkata`, save | The window is summarised as spanning midnight, with the zone shown. |
+| 10 | Set start equal to end | The screen refuses, explaining the window is ambiguous. |
+| 11 | Set an invalid zone such as `Mars/Olympus` | The save is rejected and the previous values are kept. |
+| 12 | Wait for an occurrence inside the window | Nothing is sent and the occurrence is not lost; history shows no row yet. |
+| 13 | After the window closes | The reminder is delivered exactly once. One history row, no duplicate. |
+| 14 | Inspect the database | One `user_notification_preferences` row, with the zone stored as entered or canonicalised. |
+| 15 | Sign in as a second user | `Your preferences` shows the defaults, not the first user's settings. |

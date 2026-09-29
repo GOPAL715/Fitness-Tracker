@@ -182,18 +182,48 @@ public class ReminderDeliveryScheduler {
      */
     private ReminderDeliveryService.DeliveryResult deliverAndAdvance(Map<String, Object> reminder,
             Instant now, Instant occurrence) {
-        ReminderDeliveryService.DeliveryResult result = delivery.deliver(
-                uuid(reminder.get("id")), uuid(reminder.get("user_id")),
-                text(reminder.get("title")), text(reminder.get("message")), occurrence);
+        UUID reminderId = uuid(reminder.get("id"));
+        UUID userId = uuid(reminder.get("user_id"));
 
+        // Phase 19: the user policy is consulted before anything is claimed or sent, so a decision
+        // not to notify is never recorded as a delivery failure and never consumes the retry budget.
+        ReminderNotificationPolicy.Outcome policy = delivery.policy(userId, now);
+
+        if (policy.decision() == ReminderNotificationPolicy.Decision.DEFER) {
+            // Quiet hours. The occurrence is not lost and not claimed: the schedule moves to the
+            // instant the window closes, so the very next tick delivers this same occurrence with
+            // its original occurrence_at intact. Claiming it here would burn the unique key and the
+            // occurrence could never be delivered at all.
+            delivery.updateNextOccurrence(reminderId, policy.until());
+            return new ReminderDeliveryService.DeliveryResult(reminderId, "deferred", 0, false);
+        }
+
+        if (policy.decision() == ReminderNotificationPolicy.Decision.SUPPRESS) {
+            // Notifications are off for this user. The occurrence is finished rather than postponed,
+            // so it is recorded as skipped and the schedule advances as it would after any outcome.
+            delivery.recordSuppressed(reminderId, userId, occurrence);
+            advance(reminder, now);
+            return new ReminderDeliveryService.DeliveryResult(
+                    reminderId, ReminderNotificationPolicy.SKIPPED_POLICY, 0, false);
+        }
+
+        ReminderDeliveryService.DeliveryResult result = delivery.deliver(
+                reminderId, userId,
+                text(reminder.get("title")), text(reminder.get("message")), occurrence);
+        advance(reminder, now);
+        return result;
+    }
+
+    /** Advances the schedule to the occurrence after the tick instant. */
+    private void advance(Map<String, Object> reminder, Instant now) {
+        UUID reminderId = uuid(reminder.get("id"));
         Instant next = ReminderSchedule.nextOccurrence(
                 time(reminder.get("scheduled_time")),
                 text(reminder.get("days_of_week")),
                 ReminderSchedule.Recurrence.parse(text(reminder.get("recurrence"))),
                 text(reminder.get("timezone")),
                 now).orElse(null);
-        delivery.updateNextOccurrence(uuid(reminder.get("id")), next);
-        return result;
+        delivery.updateNextOccurrence(reminderId, next);
     }
 
     /**

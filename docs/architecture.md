@@ -73,6 +73,6 @@ Configuration uses `${VAR:-local-default}` substitutions. Embedded database and 
 ## Testing
 
 Run backend tests with `mvn -f backend/pom.xml clean test`; the Testcontainers PostgreSQL acceptance
-suite executes Flyway and Spring Boot HTTP flows. The current verified backend baseline is 666 backend tests passed.
+suite executes Flyway and Spring Boot HTTP flows. The current verified backend baseline is 706 backend tests passed.
 Run frontend `npm run test` and `npm run build`. Phase 12 still needs expanded refresh, ownership,
 scanner rollback, and HTTP error-contract coverage.

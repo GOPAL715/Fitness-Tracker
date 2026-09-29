@@ -24,6 +24,20 @@ vi.mock("../src/lib/push/pushSubscription", () => ({
   disablePush: vi.fn(),
 }));
 
+// Phase 19: the settings screen now hosts the preferences panel, which reads its own API. Stubbed so
+// these cases stay about the push facts rather than about preference persistence.
+vi.mock("../src/lib/api/notificationPreferencesApi", () => ({
+  getNotificationPreferences: vi.fn(async () => ({
+    pushEnabled: true,
+    reminderNotificationsEnabled: true,
+    quietHoursEnabled: false,
+    quietHoursStart: "22:00",
+    quietHoursEnd: "07:00",
+    timezone: null,
+  })),
+  saveNotificationPreferences: vi.fn(),
+}));
+
 const mockSnapshot = vi.mocked(readPushSnapshot);
 const mockEnable = vi.mocked(enablePush);
 const mockDisable = vi.mocked(disablePush);

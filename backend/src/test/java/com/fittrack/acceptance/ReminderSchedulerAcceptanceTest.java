@@ -4,6 +4,7 @@ import com.fittrack.acceptance.support.AbstractAcceptanceTest;
 import com.fittrack.acceptance.support.FakeNotificationProvider;
 import com.fittrack.reminder.ReminderDeliveryScheduler;
 import com.fittrack.reminder.ReminderDeliveryService;
+import com.fittrack.reminder.NotificationPreferencesService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -146,7 +147,9 @@ class ReminderSchedulerAcceptanceTest extends AbstractAcceptanceTest {
     @BeforeEach
     void buildScheduler() {
         channel = new GatedNotificationProvider();
-        service = new ReminderDeliveryService(jdbc, channel, 3);
+        // Phase 19: the real preferences service, so these Phase 12 scheduler cases run through the
+        // policy gate with the shipped defaults rather than bypassing it.
+        service = new ReminderDeliveryService(jdbc, channel, new NotificationPreferencesService(jdbc), 3);
         scheduler = new ReminderDeliveryScheduler(service, Clock.fixed(NOW, ZoneOffset.UTC), true, "PT60S");
     }
 

@@ -30,12 +30,15 @@ public class ReminderDeliveryService {
 
     private final JdbcTemplate jdbc;
     private final NotificationDeliveryProvider provider;
+    private final NotificationPreferencesService preferences;
     private final int maxAttempts;
 
     public ReminderDeliveryService(JdbcTemplate jdbc, NotificationDeliveryProvider provider,
+            NotificationPreferencesService preferences,
             @org.springframework.beans.factory.annotation.Value("${app.reminders.max-attempts:3}") int maxAttempts) {
         this.jdbc = jdbc;
         this.provider = provider;
+        this.preferences = preferences;
         this.maxAttempts = Math.max(1, maxAttempts);
     }
 
@@ -93,6 +96,37 @@ public class ReminderDeliveryService {
         // one from the final attempt, which is the attempt that exhausted the budget.
         finish(reminderId, occurrence, "exhausted", attempts, lastError, category);
         return new DeliveryResult(reminderId, "exhausted", attempts, false);
+    }
+
+    /**
+     * Records an occurrence that was deliberately not sent.
+     *
+     * <p>Phase 19. This is not a failure and is recorded as neither a state nor a category from
+     * Phase 17: the user turned notifications off, nothing was attempted, and no provider was
+     * contacted. Claiming the occurrence is still correct here - unlike a deferral - because the
+     * occurrence is finished rather than postponed, and the schedule advances past it, so leaving it
+     * unclaimed would only present the same occurrence again on the next tick.
+     *
+     * <p>{@code last_error} is left NULL for the same reason a delivered occurrence leaves its
+     * failure category NULL: there is no error to describe.
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    void recordPolicySkip(UUID reminderId, UUID userId, Instant occurrence) {
+        try {
+            jdbc.update("insert into reminder_deliveries(id,reminder_id,user_id,occurrence_at,state,attempts)"
+                            + " values (?,?,?,?,?,0)",
+                    UUID.randomUUID(), reminderId, userId, Timestamp.from(occurrence),
+                    ReminderNotificationPolicy.SKIPPED_POLICY);
+        } catch (DuplicateKeyException e) {
+            // Already accounted for. The unique key is the same guarantee it is for a real send, so
+            // a racing instance does not produce a second row for one occurrence.
+            return;
+        }
+        // The reminder's summary mirrors the occurrence, as finish() does. A skipped occurrence is
+        // not a failure, so last_error stays null and last_delivered_at is untouched: nothing was
+        // delivered.
+        jdbc.update("update reminders set delivery_status=?,delivery_attempts=0,last_error=null"
+                + " where id=?", ReminderNotificationPolicy.SKIPPED_POLICY, reminderId);
     }
 
     /**
@@ -249,6 +283,26 @@ public class ReminderDeliveryService {
     }
 
     public int maxAttempts() { return maxAttempts; }
+
+    /**
+     * Whether this user may have a reminder delivered at {@code now}, as a user policy.
+     *
+     * <p>Phase 19. Exposed here rather than in the scheduler so the scheduler keeps its "decides when
+     * to run, owns no policy" shape: it asks, and acts on the answer.
+     */
+    public ReminderNotificationPolicy.Outcome policy(UUID userId, Instant now) {
+        return new ReminderNotificationPolicy(preferences).evaluate(userId, now);
+    }
+
+    /**
+     * Records an occurrence suppressed by user policy.
+     *
+     * <p>Package-private on the service and public on the class the scheduler drives, so a
+     * suppression is written in the same place, transaction and shape as a real outcome.
+     */
+    public void recordSuppressed(UUID reminderId, UUID userId, Instant occurrence) {
+        recordPolicySkip(reminderId, userId, occurrence);
+    }
 
     public String channel() { return provider.channel(); }
 }

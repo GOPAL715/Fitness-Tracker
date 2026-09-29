@@ -10,6 +10,7 @@ import {
   type EnableResult,
   type PushSnapshot,
 } from "../lib/push/pushSubscription";
+import { NotificationPreferencesPanel } from "../components/NotificationPreferencesPanel";
 
 /**
  * The notification settings centre.
@@ -265,6 +266,11 @@ function SnapshotBody({ snapshot, busy, result, onEnable, onDisable }: {
           {result.message}
         </p>
       )}
+
+      {/* Phase 19: the user's own decisions, kept apart from every fact observed above. Turning a
+          preference off here never unsubscribes this browser, and never disables a reminder - those
+          are separate settings with separate controls, one row lower down. */}
+      <NotificationPreferencesPanel />
 
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
         {canEnable(snapshot) && (

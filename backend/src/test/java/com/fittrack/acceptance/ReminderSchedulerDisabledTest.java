@@ -4,6 +4,7 @@ import com.fittrack.acceptance.support.AbstractAcceptanceTest;
 import com.fittrack.acceptance.support.FakeNotificationProvider;
 import com.fittrack.reminder.ReminderDeliveryScheduler;
 import com.fittrack.reminder.ReminderDeliveryService;
+import com.fittrack.reminder.NotificationPreferencesService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -65,7 +66,7 @@ class ReminderSchedulerDisabledTest extends AbstractAcceptanceTest {
         // than to one instance's state.
         var channel = new FakeNotificationProvider();
         var disabled = new ReminderDeliveryScheduler(
-                new ReminderDeliveryService(jdbc, channel, 3),
+                new ReminderDeliveryService(jdbc, channel, new NotificationPreferencesService(jdbc), 3),
                 Clock.fixed(NOW, ZoneOffset.UTC), false, "PT60S");
         disabled.tick();
 
