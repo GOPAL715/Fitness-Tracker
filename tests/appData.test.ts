@@ -186,6 +186,9 @@ describe("tab configuration", () => {
     const ids = TABS.map((t) => t.id);
     expect(ids).toEqual([
       "today", "workouts", "progress", "nutrition",
+      // "reminders" is new in Phase 16: reminders are managed in their own tab, and a push
+      // notification deep-links into the same detail view that tab opens.
+      "reminders",
       // "coach" is new in Phase 9: the Coach has its own surface rather than living in Profile.
       "habits", "goals", "coach", "calendar", "profile",
     ]);

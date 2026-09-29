@@ -4,6 +4,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
+import java.time.DayOfWeek;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalTime;
@@ -176,6 +177,87 @@ class ReminderScheduleTest {
 
             assertThat(next).isAfter(from);
             assertThat(next.atZone(KOLKATA).toLocalTime()).isEqualTo(LocalTime.of(7, 0));
+        }
+    }
+
+    @Nested
+    @DisplayName("stored day indices follow the documented 0=Sunday contract")
+    class StoredDayIndices {
+
+        // Chosen so each case is unambiguous: 2026-09-30 is a Wednesday and 08:00 local has not yet
+        // passed on that day.
+        private static final Instant FROM = Instant.parse("2026-09-29T20:00:00Z");
+
+        private DayOfWeek dayOf(String stored) {
+            return ReminderSchedule.nextOccurrence(LocalTime.of(8, 0), stored,
+                    ReminderSchedule.Recurrence.WEEKLY, "UTC", FROM)
+                    .orElseThrow().atZone(ZoneOffset.UTC).getDayOfWeek();
+        }
+
+        @Test
+        @DisplayName("index 0 is Sunday rather than an error")
+        void zeroIsSunday() {
+            assertThat(dayOf("0"))
+                    .as("0 is Sunday in the frontend contract; it previously threw DateTimeException")
+                    .isEqualTo(DayOfWeek.SUNDAY);
+        }
+
+        @Test
+        @DisplayName("1 to 6 are Monday through Saturday")
+        void oneToSixAreMondayToSaturday() {
+            assertThat(dayOf("1")).isEqualTo(DayOfWeek.MONDAY);
+            assertThat(dayOf("2")).isEqualTo(DayOfWeek.TUESDAY);
+            assertThat(dayOf("3")).isEqualTo(DayOfWeek.WEDNESDAY);
+            assertThat(dayOf("4")).isEqualTo(DayOfWeek.THURSDAY);
+            assertThat(dayOf("5")).isEqualTo(DayOfWeek.FRIDAY);
+            assertThat(dayOf("6")).isEqualTo(DayOfWeek.SATURDAY);
+        }
+
+        @Test
+        @DisplayName("index 7 also resolves to Sunday")
+        void sevenIsAcceptedAsSunday() {
+            assertThat(dayOf("7"))
+                    .as("7 is Sunday in java.time numbering and is accepted for stored values")
+                    .isEqualTo(DayOfWeek.SUNDAY);
+        }
+
+        @Test
+        @DisplayName("0 and 3 together resolve to a day from that set")
+        void sundayAndWednesday() {
+            // The next such day after the reference instant is the Wednesday, not the Sunday that
+            // has already passed - which is what proves both indices parsed rather than one throwing.
+            assertThat(dayOf("0,3")).isEqualTo(DayOfWeek.WEDNESDAY);
+        }
+
+        @Test
+        @DisplayName("1,2,3 resolve to a day from that set")
+        void mondayTuesdayWednesday() {
+            assertThat(dayOf("1,2,3")).isIn(DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY);
+        }
+
+        @Test
+        @DisplayName("the every-day value stored by the existing fixtures is accepted")
+        void everyDayValueIsAccepted() {
+            assertThat(ReminderSchedule.nextOccurrence(LocalTime.of(8, 0), "1,2,3,4,5,6,0",
+                    ReminderSchedule.Recurrence.WEEKLY, "UTC", FROM))
+                    .as("this exact value is what the acceptance fixtures store")
+                    .isPresent();
+        }
+
+        @Test
+        @DisplayName("an out-of-range index is ignored rather than fatal")
+        void outOfRangeIndexIsIgnored() {
+            assertThat(ReminderSchedule.nextOccurrence(LocalTime.of(8, 0), "1,99",
+                    ReminderSchedule.Recurrence.WEEKLY, "UTC", FROM))
+                    .as("one bad token must not take down the whole schedule")
+                    .isPresent();
+        }
+
+        @Test
+        @DisplayName("day names and JSON-ish lists still resolve")
+        void namesAndJsonListsStillResolve() {
+            assertThat(dayOf("MONDAY")).isEqualTo(DayOfWeek.MONDAY);
+            assertThat(dayOf("[0]")).isEqualTo(DayOfWeek.SUNDAY);
         }
     }
 }

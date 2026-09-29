@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "./lib/auth";
-import { parseReminderPath } from "./lib/paths";
+import { parseReminderPath, reminderPath } from "./lib/paths";
 import { useSyncStatus } from "./lib/offline/useSyncStatus";
 import { useAppData } from "./features/appData/useAppData";
 import { DEFAULT_TAB, type Tab } from "./features/navigation/tabs";
@@ -17,6 +17,9 @@ import CoachView from "./views/CoachView";
 import CalendarView from "./views/CalendarView";
 import ProfileView from "./views/ProfileView";
 import ReminderDetailView from "./views/ReminderDetailView";
+import RemindersView from "./views/RemindersView";
+import ReminderFormModal from "./views/ReminderFormModal";
+import type { Reminder } from "./lib/api/reminderApi";
 
 /**
  * The reminder id encoded in the current URL, or null.
@@ -52,6 +55,7 @@ export default function App() {
   // client.navigate(), which is a real page load that can land here with a path the SPA has not yet
   // seen. Anything that is not a reminder path leaves the tab state alone.
   const [reminderId, setReminderId] = useState<string | null>(() => reminderIdFromLocation());
+  const [editingReminder, setEditingReminder] = useState<Reminder | null>(null);
 
   useEffect(() => {
     const sync = () => setReminderId(reminderIdFromLocation());
@@ -65,13 +69,26 @@ export default function App() {
     };
   }, []);
 
+  /**
+   * Opens a reminder from inside the app.
+   *
+   * <p>Goes through the same path layer a push tap does, so a link opened from the list and one opened
+   * from a notification land in exactly the same place and share the same validation.
+   */
+  function openReminder(id: string) {
+    if (typeof window !== "undefined" && window.history?.replaceState) {
+      window.history.replaceState(null, "", reminderPath(id));
+    }
+    setReminderId(id);
+  }
+
   /** Returns to the ordinary application, clearing the deep link from the address bar too. */
   function leaveReminder() {
     if (typeof window !== "undefined" && window.history?.replaceState) {
       window.history.replaceState(null, "", "/");
     }
     setReminderId(null);
-    setTab(DEFAULT_TAB);
+    setTab("reminders");
   }
 
   function selectTab(next: Tab) {
@@ -97,7 +114,16 @@ export default function App() {
         onSignOut={signOut}
         syncStatus={sync.status}
       >
-        <ReminderDetailView id={reminderId} onBack={leaveReminder} />
+        <ReminderDetailView id={reminderId} onBack={leaveReminder} onEdit={setEditingReminder} />
+        {editingReminder && (
+          // Closing keeps the reader on the reminder they opened, which is where they started.
+          <ReminderFormModal
+            reminder={editingReminder}
+            onClose={() => setEditingReminder(null)}
+            onSaved={() => setEditingReminder(null)}
+            onDeleted={() => { setEditingReminder(null); leaveReminder(); }}
+          />
+        )}
       </AppShell>
     );
   }
@@ -174,6 +200,8 @@ export default function App() {
       )}
 
       {tab === "goals" && <GoalsView goals={app.goals} profile={app.profile} onRefresh={app.reload} />}
+
+      {tab === "reminders" && <RemindersView onOpen={openReminder} />}
 
       {tab === "coach" && <CoachView fallbackInput={{
         sessions: app.workouts?.filter((w) => w.completed).length ?? 0,

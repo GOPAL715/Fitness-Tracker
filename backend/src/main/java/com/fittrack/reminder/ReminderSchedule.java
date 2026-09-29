@@ -99,16 +99,41 @@ public final class ReminderSchedule {
     private static DayOfWeek toDay(String token) {
         String value = token.trim();
         if (value.isEmpty()) return null;
-        // "0" is Sunday in the frontend contract, matching java.time's DayOfWeek numbering.
         if (value.chars().allMatch(Character::isDigit)) {
-            int index = Integer.parseInt(value);
-            if (index >= 0 && index <= 6) return DayOfWeek.of(index);
-            return null;
+            return fromIndex(value);
         }
         try {
             return DayOfWeek.valueOf(value.toUpperCase());
         } catch (IllegalArgumentException e) {
             return null;
         }
+    }
+
+    /**
+     * Maps a stored day index to a weekday.
+     *
+     * <p>The index contract is {@code 0 = Sunday} through {@code 6 = Saturday}, which is the numbering
+     * the frontend has always used. {@code 7} is also accepted as Sunday, because
+     * {@link DayOfWeek#SUNDAY} is numerically 7 in java.time and a value stored under either
+     * convention should still resolve.
+     *
+     * <p>This mapping is the fix for a defect found during the Phase 16 audit. The previous code
+     * passed the index straight to {@link DayOfWeek#of(int)}, which is {@code 1 = Monday ...
+     * 7 = Sunday}, so every index shifted by one and {@code 0} threw outright: a weekly reminder
+     * containing Sunday failed to reschedule. Existing rows written as {@code "1,2,3,4,5,6,0"}
+     * therefore meant Monday-to-Saturday plus a crash, and are now read the way the UI has always
+     * displayed them. Out-of-range values are ignored rather than fatal, so one bad token cannot take
+     * down a whole schedule.
+     */
+    private static DayOfWeek fromIndex(String token) {
+        int index;
+        try {
+            index = Integer.parseInt(token);
+        } catch (NumberFormatException e) {
+            return null;
+        }
+        if (index == 0 || index == 7) return DayOfWeek.SUNDAY;
+        if (index >= 1 && index <= 6) return DayOfWeek.of(index);
+        return null;
     }
 }

@@ -10,6 +10,8 @@ import org.springframework.test.web.servlet.MvcResult;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.sql.Timestamp;
+import java.time.Instant;
 import java.util.Map;
 import java.util.UUID;
 
@@ -200,5 +202,70 @@ class ReminderDetailAccessAcceptanceTest extends AbstractAcceptanceTest {
                 .isEqualTo("Renamed");
         assertThat(jdbc.queryForObject("select enabled from reminders where id=?", Boolean.class, id))
                 .isFalse();
+    }
+
+    // -------------------------------------------------- cross-user isolation (Phase 16)
+
+    @Test
+    @DisplayName("Phase 16 reminders - a list contains only the caller own reminders")
+    void listIsUserScoped() throws Exception {
+        Session owner = register("rem-iso-list-a-");
+        Session other = register("rem-iso-list-b-");
+        createReminder(owner);
+        createReminder(other);
+
+        MvcResult result = getAs(other, "/api/v1/reminders");
+
+        assertStatus(result, 200);
+        // Every row carries the caller's own user_id and nothing else, so a cross-user leak of any
+        // kind would surface here rather than needing the id compared directly.
+        for (var node : json(result)) {
+            String userId = node.path("user_id").asText();
+            if (userId != null && !userId.isBlank()) {
+                assertThat(userId).isEqualTo(other.id());
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("Phase 16 reminders - another user cannot update or delete a reminder")
+    void updateAndDeleteAreOwnerScoped() throws Exception {
+        Session owner = register("rem-iso-write-a-");
+        Session attacker = register("rem-iso-write-b-");
+        UUID id = createReminder(owner);
+
+        assertThat(call(attacker, put("/api/v1/reminders/" + id)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(mapper.writeValueAsString(Map.of("title", "Hijacked"))))
+                .getResponse().getStatus()).isEqualTo(404);
+        assertThat(call(attacker, delete("/api/v1/reminders/" + id)).getResponse().getStatus())
+                .isEqualTo(404);
+
+        assertThat(jdbc.queryForObject("select title from reminders where id=?", String.class, id))
+                .as("the row is untouched by another account")
+                .isEqualTo("Time to train");
+    }
+
+    @Test
+    @DisplayName("Phase 16 reminders - another user cannot reschedule a reminder")
+    void rescheduleIsOwnerScoped() throws Exception {
+        Session owner = register("rem-iso-resch-a-");
+        Session attacker = register("rem-iso-resch-b-");
+        UUID id = createReminder(owner);
+        assertStatus(reschedule(owner, id), 200);
+        Instant before = jdbc.queryForObject(
+                "select next_occurrence_at from reminders where id=?", Timestamp.class, id).toInstant();
+
+        MvcResult result = call(attacker, post("/api/v1/reminders/" + id + "/reschedule")
+                .contentType(MediaType.APPLICATION_JSON).content("{}"));
+
+        assertThat(result.getResponse().getStatus()).isEqualTo(404);
+        assertThat(jdbc.queryForObject("select next_occurrence_at from reminders where id=?",
+                Timestamp.class, id).toInstant()).isEqualTo(before);
+    }
+
+    private MvcResult reschedule(Session user, UUID id) throws Exception {
+        return call(user, post("/api/v1/reminders/" + id + "/reschedule")
+                .contentType(MediaType.APPLICATION_JSON).content("{}"));
     }
 }

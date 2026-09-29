@@ -1,6 +1,6 @@
 import type { LucideIcon } from "lucide-react";
 import {
-  Activity, Dumbbell, TrendingUp, Utensils, Target, Repeat, User, CalendarDays, Sparkles,
+  Activity, Bell, Dumbbell, TrendingUp, Utensils, Target, Repeat, User, CalendarDays, Sparkles,
 } from "lucide-react";
 
 export type Tab =
@@ -10,6 +10,7 @@ export type Tab =
   | "nutrition"
   | "habits"
   | "goals"
+  | "reminders"
   | "coach"
   | "calendar"
   | "profile";
@@ -25,6 +26,9 @@ export const TABS: TabDefinition[] = [
   { id: "workouts", label: "Workouts", icon: Dumbbell },
   { id: "progress", label: "Progress", icon: TrendingUp },
   { id: "nutrition", label: "Nutrition", icon: Utensils },
+  // Phase 16: reminders sit beside the other "things you set up and forget" surfaces, and a push
+  // notification deep-links into the same detail view this tab opens.
+  { id: "reminders", label: "Reminders", icon: Bell },
   { id: "habits", label: "Habits", icon: Repeat },
   { id: "goals", label: "Goals", icon: Target },
   { id: "coach", label: "Coach", icon: Sparkles },
