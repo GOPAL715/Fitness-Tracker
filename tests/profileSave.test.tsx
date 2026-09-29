@@ -13,6 +13,15 @@ import type { Profile } from "../src/lib/domain";
 // than standing up the whole provider and its token-refresh side effects.
 vi.mock("../src/lib/auth", () => ({ useAuth: () => ({ session: { user: { email: "sam@example.test" } } }) }));
 
+// Phase 20: ProfileView now renders HealthIntegrationsPanel, which fetches on mount. This suite
+// intercepts fetch to assert the exact method, URL and payload of the profile save, so the panel's
+// own request would be recorded first and calls[0] would no longer be the save. The panel is a
+// separate collaborator with its own suite (tests/healthIntegrations.test.tsx), so it is stubbed
+// here rather than accommodated for.
+vi.mock("../src/components/HealthIntegrationsPanel", () => ({
+  HealthIntegrationsPanel: () => <div data-testid="health-integrations-stub" />,
+}));
+
 import ProfileView, { formToPayload, profileToForm } from "../src/views/ProfileView";
 
 const profile: Profile = {

@@ -37,6 +37,56 @@ public class AppDataService {
      * views here. Without this the app data payload returns two rows for a single date and the UI
      * renders the day twice.
      */
+    /**
+     * The columns {@code health_devices} may contribute to the app-data payload (Phase 20).
+     *
+     * <h2>What this fixes</h2>
+     * This table was read with {@code SELECT *}, so every column it grows is published to the browser
+     * automatically. That had already leaked two:
+     * <ul>
+     *   <li>{@code sync_cursor} - the server's internal day watermark. It is not a cosmetic value: it
+     *       decides the window the next sync re-reads, and {@code HealthSyncService} already falls
+     *       back to a bounded window when it cannot parse one. A client should never be able to read
+     *       or infer it, and {@code docs/database.md} already states it is never returned by the API.
+     *       The dedicated {@code /api/v1/health/devices} route excluded it; this aggregate route did
+     *       not, so an exclusion was undone by a second reader.</li>
+     *   <li>{@code client_changes_token} - the Android client's own opaque Health Connect resume
+     *       handle. V11 documents it as a strictly separate concept from the server's cursor precisely
+     *       so the two cannot be conflated; publishing it to a browser hands the client's resumption
+     *       state to a third party for no benefit.</li>
+     * </ul>
+     *
+     * <h2>Why an allowlist rather than a denylist</h2>
+     * A denylist of the two known offenders would leave the next column added to this table exposed by
+     * default, which is how the first leak happened. The allowlist inverts that: a column becomes
+     * visible because it was named here, which is the same rule {@code HealthDeviceResponse} and
+     * {@code HealthIntegrationController} already follow.
+     *
+     * <p>{@code user_id} is excluded too. The payload is already owner-scoped, so echoing the subject
+     * back adds nothing a client does not already hold.
+     */
+    private static final Map<String, String> DEVICE_PROJECTION = Map.ofEntries(
+        Map.entry("id", "id"),
+        Map.entry("device_name", "device_name"),
+        Map.entry("device_type", "device_type"),
+        Map.entry("status", "status"),
+        Map.entry("provider", "provider"),
+        Map.entry("external_device_id", "external_device_id"),
+        Map.entry("last_sync", "last_sync"),
+        Map.entry("sync_status", "sync_status"),
+        Map.entry("last_error", "last_error"),
+        Map.entry("permission_status", "permission_status"),
+        Map.entry("created_at", "created_at")
+    );
+
+    /**
+     * Read source for tables whose projection must collapse multiple source rows.
+     *
+     * <p>Phase 10 lets a day hold a manual row and one row per connected device. Everything the app
+     * reads has to see one value per day, so the two metric tables are read through their canonical
+     * views here. Without this the app data payload returns two rows for a single date and the UI
+     * renders the day twice.
+     */
     private static String readSource(String table) {
         return switch (table) {
             case "daily_metrics" -> "v_daily_metrics_canonical";
@@ -45,12 +95,30 @@ public class AppDataService {
         };
     }
 
+    /**
+     * The selected column list for a table.
+     *
+     * <p>{@code health_devices} gets an explicit list; every other table keeps {@code *}, which is
+     * deliberate and out of scope to change here. Those tables hold no secret and no resumable cursor,
+     * and rewriting eight unrelated projections would put this fix at risk for no security benefit.
+     * The one table that stores a credential-bearing cursor is now handled.
+     */
+    private static String columns(String table) {
+        return "health_devices".equals(table) ? DEVICE_COLUMNS : "*";
+    }
+
+    /** The device columns in a stable order, built once from the allowlist. */
+    private static final String DEVICE_COLUMNS = String.join(",", DEVICE_PROJECTION.values());
+
     @Transactional(readOnly = true)
     public Map<String,Object> load(String userId) {
         if (userId == null || userId.isBlank()) throw new IllegalArgumentException("Authenticated user is required");
         Map<String,Object> result = new LinkedHashMap<>();
         for (String table : USER_TABLES) {
-            String sql = "SELECT * FROM " + readSource(table) + " WHERE user_id = CAST(? AS uuid)";
+            // The column list is built from an allowlist rather than written inline, so the same
+            // projection cannot drift between the map that documents it and the query that uses it.
+            String sql = "SELECT " + columns(table) + " FROM " + readSource(table)
+                    + " WHERE user_id = CAST(? AS uuid)";
             List<Map<String,Object>> rows = jdbc.queryForList(sql, userId);
             if ("fitness_profile".equals(table)) result.put("profile", rows.isEmpty() ? null : rows.get(0));
             else result.put(NAMES.get(table), rows);

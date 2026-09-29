@@ -93,6 +93,110 @@ The native bridge is a **separate repository**. When it exists it will post an a
 payload through the existing authenticated contract; it must not be modelled as the server calling
 Health Connect.
 
+## Phase 20: the integration foundation
+
+Phase 20 added the integration **surface** — a server-authoritative provider catalogue and one
+explicit connection state — and closed a data leak in the app-data route. It deliberately added no
+table, no migration, no credential storage, no OAuth and no background job.
+
+### The catalogue is served, not hardcoded
+
+`GET /api/v1/health/integrations` returns the providers this build knows, merged with the caller's own
+connections:
+
+```jsonc
+{
+  "integrations": [
+    {
+      "provider": "health-connect",
+      "label": "Android Health Connect",
+      "availability": "native_bridge",        // native_bridge | server_credentials_required
+                                              // | native_app_required | manual
+      "auth_model": "A separate Android app on your phone, using your existing FitTrack sign-in",
+      "credential_model": "none",
+      "supported_metrics": ["steps", "active_calories", "weight", "body_fat"],
+      "connectable": true,
+      "boundary": "Health Connect is an Android-native, on-device API, ...",
+      "connection_state": "connecting",
+      "connections": [ /* this user's own connections */ ]
+    }
+  ]
+}
+```
+
+Before this, the provider list lived only in `src/lib/healthProviders.ts` while the authoritative
+allowlist lived in the backend, and nothing kept them in step. The browser could therefore be shown a
+provider the server would refuse on registration. `HealthProviderCatalog` is now the single
+description, and `HealthProviderCatalogTest` asserts it covers exactly `HealthProviders.SUPPORTED`, so
+neither can acquire a provider the other has not heard of.
+
+`fake-wearable` stays in the allowlist so the in-process test double attributes its rows consistently,
+but it is **never served to a client**: it reaches no external service.
+
+`credential_model` is `"none"` for every provider, and that is a fact rather than an omission. No
+adapter performs an OAuth exchange, so FitTrack holds no provider access token, refresh token or
+client secret, and there is no column to hold one.
+
+### Connection state
+
+One state per provider, derived from `health_devices.sync_status`. **No column was added.**
+
+| Stored `sync_status` | Reported state |
+| --- | --- |
+| *(no row for this provider)* | `disconnected` |
+| `idle` | `connecting` |
+| `syncing` | `syncing` |
+| `synced` | `connected` |
+| `error` | `sync_failed` |
+
+`connecting` means registered but never synced — the connection exists, is owned by the user, and has
+not yet produced data. That is what `HealthDeviceResponse.awaitingFirstSync` already meant, and what the
+old UI already rendered as "Connected, not synced yet". Phase 20 gives that existing fact a name the
+API contract can state.
+
+Two rules the model enforces:
+
+- **An unreadable status is a failure, never a success.** A value the server does not recognise maps
+  to `sync_failed`, because a state it cannot read is not evidence that anything worked. Defaulting it
+  to `connected` would show a green badge on the strength of an unknown value.
+- **A provider with several connections reports the most actionable one.** One provider can own two
+  watches. Priority is `sync_failed` > `syncing` > `connecting` > `connected`, evaluated as a maximum
+  rather than first-wins, so the badge does not change with row order. All connections are still listed.
+
+### The app-data leak this phase closed
+
+`GET /api/v1/app-data` read `health_devices` with `SELECT *`. That published two columns on every
+call:
+
+- **`sync_cursor`** — the server's internal day watermark. It is not cosmetic: it decides the window
+  the next sync re-reads. `docs/database.md` already promised it was never returned by the API, and
+  the dedicated `/health/devices` route did exclude it — the aggregate route undid that exclusion.
+- **`client_changes_token`** — the Android client's own opaque resume handle. V11 keeps it strictly
+  separate from the server's cursor precisely so the two cannot be conflated.
+
+`AppDataService` now selects an explicit allowlist for this table, so a column becomes visible because
+it was named rather than because it exists. Other tables keep `SELECT *`: none holds a secret or a
+resumable cursor, and rewriting eight unrelated projections would put this fix at risk for no benefit.
+
+`HealthIntegrationController` and `HealthDeviceResponse` follow the same allowlist rule.
+
+### `permission_status` completed
+
+The V11 column existed, was written by every Health Connect ingest, was declared in the frontend types
+and was rendered by the profile screen — but no DTO carried it and no query selected it, so the
+permission badge could never appear. Phase 20 adds it to the allowlist and the DTO.
+
+It remains a **device-reported claim**. The server cannot observe Android Health Connect permissions,
+so nothing in the authentication or authorization path reads it and it can neither grant nor deny
+access. The UI phrases it as what the app reports.
+
+### Why no migration
+
+Every change above is application-layer. The catalogue and the state model are derived from columns
+that already exist; the leak fix is a projection change; `permission_status` was already in the
+schema. An empty or no-op V15 would be a permanent historical artifact claiming a schema change that
+did not happen, so none was added. **The next migration number remains V15.**
+
 ## Tokens and encryption
 
 **No provider token is stored anywhere.** The registration endpoint rejects `access_token`,

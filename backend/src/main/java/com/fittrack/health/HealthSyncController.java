@@ -30,9 +30,17 @@ import java.util.UUID;
 @RequestMapping("/api/v1/health")
 public class HealthSyncController {
 
-    /** The only columns the list endpoint may read. */
+    /**
+     * The only columns the list endpoint may read.
+     *
+     * <p>Phase 20 adds {@code permission_status}, which the V11 ingest path has always written and the
+     * profile screen has always tried to render. {@code sync_cursor} and {@code client_changes_token}
+     * are still excluded, and the second exclusion matters: the changes token is the Android client's
+     * own opaque resume handle, and publishing it would let a browser drive the server's push cursor.
+     */
     private static final String DEVICE_COLUMNS =
-            "id,device_name,device_type,status,provider,external_device_id,last_sync,sync_status,last_error";
+            "id,device_name,device_type,status,provider,external_device_id,last_sync,sync_status,last_error,"
+                    + "permission_status";
 
     private final JdbcTemplate jdbc;
     private final HealthSyncService sync;

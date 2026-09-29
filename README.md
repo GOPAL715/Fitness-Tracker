@@ -291,8 +291,10 @@ troubleshooting, incident response and rollback.
 
 **Device integrations are not live.** Apple Health and Google Health Connect are native-only APIs with
 no web access. Fitbit and Garmin need an OAuth application with server-side credentials. All four are
-described honestly in the Profile screen along with exactly what each would require. The normalisation
-layer in `healthProviders.ts` is real and tested in shape, but no provider is connected.
+described honestly in the Profile screen along with exactly what each would require. Since Phase 20 that
+list is served by `GET /api/v1/health/integrations` rather than hardcoded in the client, so what a
+person sees and what the backend would accept cannot drift. No provider is connected, and FitTrack
+holds no provider credential of any kind.
 
 **The PWA shell works offline, and workout logging now queues offline.** The service worker caches
 the app shell so FitTrack opens without a connection, and deliberately never caches private health

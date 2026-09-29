@@ -18,6 +18,17 @@ import java.util.UUID;
  *
  * <p>Deliberately absent: {@code sync_cursor}, {@code user_id}, any token or credential field, and
  * the provider's internal identifiers beyond the opaque external device id the user supplied.
+ *
+ * <h2>permissionStatus (Phase 20)</h2>
+ * The V11 column existed, was written by every Health Connect ingest, was declared in the frontend
+ * types and was rendered by the profile screen - but this record had no field for it and
+ * {@code HealthSyncController} never selected it, so the value was structurally unreachable and the
+ * permission badge could never appear. Phase 20 completes the contract rather than adding a feature.
+ *
+ * <p>It remains a <b>device-reported claim</b>. The server cannot observe Android Health Connect
+ * permissions, so nothing in the authentication or authorization path reads this field and it can
+ * neither grant nor deny access to a record. It is presentation metadata, and the UI is required to
+ * label it as something the app reported.
  */
 @JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)
 public record HealthDeviceResponse(
@@ -34,11 +45,21 @@ public record HealthDeviceResponse(
         String lastError,
         Instant lastSyncAt,
         /** True when a device is connected but has never completed a sync. */
-        boolean awaitingFirstSync) {
+        boolean awaitingFirstSync,
+        /**
+         * What the device reported about its own platform permissions, or null when it reported
+         * nothing. Never an authorization input.
+         */
+        String permissionStatus) {
 
     public HealthDeviceResponse withStatus(String newStatus) {
         return new HealthDeviceResponse(id, provider, externalDeviceId, deviceName, deviceType,
-                newStatus, syncStatus, lastError, lastSyncAt, awaitingFirstSync);
+                newStatus, syncStatus, lastError, lastSyncAt, awaitingFirstSync, permissionStatus);
+    }
+
+    /** The one state a client should render for this connection. */
+    public String connectionState() {
+        return HealthConnectionState.of(syncStatus);
     }
 
     /**
@@ -67,6 +88,7 @@ public record HealthDeviceResponse(
                 syncStatus,
                 row.get("last_error") == null ? null : String.valueOf(row.get("last_error")),
                 lastSync,
-                lastSync == null);
+                lastSync == null,
+                row.get("permission_status") == null ? null : String.valueOf(row.get("permission_status")));
     }
 }

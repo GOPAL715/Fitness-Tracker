@@ -23,6 +23,12 @@ Base URL: `http://localhost:8080/api/v1` locally. Production base URL and TLS ar
 | POST | `/api/v1/food-scans/{id}/confirm` | Yes | Optional meal metadata | Confirmed scan DTO and meal ID |
 | DELETE | `/api/v1/food-scans/{id}` | Yes | UUID scan ID | 204 after row and stored-object cleanup |
 | POST | `/api/v1/coach/insights` | Yes | Optional `{ "question"?: string (max 500), "window_days"?: 7 \| 30 \| 90 }`; optional `Idempotency-Key` header | Structured `summary`, `observations`, `recommendations`, `next_actions`, `warnings`, `model`, `request_id`. Context is assembled and allowlisted server-side. See [ai-coach.md](ai-coach.md). |
+| GET | `/api/v1/health/integrations` | Yes | None | `{ "integrations": [...] }`. Server-authoritative provider catalogue merged with the caller's own connections. No credential, cursor or changes token. See [health-integrations.md](health-integrations.md). |
+| GET | `/api/v1/health/devices` | Yes | None | Owner-scoped connection list, allowlisted columns only. |
+| POST | `/api/v1/health/devices` | Yes | `{ "device_name", "device_type", "provider", "external_device_id" }`; credential fields rejected | Registered connection. `provider` must be in the allowlist. |
+| POST | `/api/v1/health/devices/{id}/sync` | Yes | Optional `{ "to": "YYYY-MM-DD" }` | Counts and `records_rejected`/`truncated`; 502 with a stable category when the provider fails. |
+| DELETE | `/api/v1/health/devices/{id}` | Yes | None | `{ "disconnected": true, "imported_history_retained": true, "message" }`. |
+| GET/POST | `/api/v1/health/timezone` | Yes | `{ "timezone": "Asia/Kolkata" }` | The caller's IANA zone. Required and never defaulted. |
 | GET | `/actuator/health` | No | None | Spring health payload. |
 
 Example:

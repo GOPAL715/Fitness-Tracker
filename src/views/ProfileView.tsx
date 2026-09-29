@@ -3,7 +3,6 @@ import { disablePush, enablePush, pushSupport, pushExplainText } from "../lib/pu
 import type { SupportState } from "../lib/push/pushSubscription";
 import {
   Target,
-  Watch,
   Bell,
   ShieldCheck,
   Save,
@@ -12,9 +11,6 @@ import {
   Info,
   Lightbulb,
   Trophy,
-  RefreshCw,
-  Plug,
-  PlugZap,
   UserCog,
   Sparkles,
   Settings,
@@ -28,15 +24,9 @@ import {
   type CoachNotification,
 } from "../lib/domain";
 import { SectionHeader, EmptyState } from "../components/ui";
-import { relativeTime } from "../lib/utils";
+import { HealthIntegrationsPanel } from "../components/HealthIntegrationsPanel";
 import { useAuth } from "../lib/auth";
 import { apiData } from "../lib/api/dataAdapter";
-import { HEALTH_PROVIDERS, statusLabel, statusTone } from "../lib/healthProviders";
-import {
-  syncHealthDevice, deleteHealthDevice, healthErrorMessage,
-  DISCONNECT_RETENTION_NOTICE, syncStateLabel, permissionStateNotice, permissionStateLabel,
-  type HealthDevice as HealthDeviceResponse,
-} from "../lib/api/healthApi";
 
 type Props = {
   profile: Profile | null;
@@ -123,13 +113,14 @@ export default function ProfileView({ profile, devices, notifications, onRefresh
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [syncing, setSyncing] = useState<string | null>(null);
-const [pushState, setPushState] = useState<SupportState>("default");
+  const [pushState, setPushState] = useState<SupportState>("default");
 const [pushBusy, setPushBusy] = useState(false);
 /** Phase 18: the outcome of the last push action, in plain words, success or failure. */
 const [pushNotice, setPushNotice] = useState<string | null>(null);
   const { session } = useAuth();
   const [coachError, setCoachError] = useState<string | null>(null);
+  /** Phase 20: a failed coach-message read, reported beside the messages rather than beside devices. */
+  const [coachReadError, setCoachReadError] = useState<string | null>(null);
 
   const [form, setForm] = useState<ProfileForm>(() => profileToForm(profile));
   /** True once the user edits a field, so a background refresh cannot discard their typing. */
@@ -180,60 +171,19 @@ const [pushNotice, setPushNotice] = useState<string | null>(null);
     }
   }
 
-  const [deviceError, setDeviceError] = useState<string | null>(null);
-
   /**
-   * Runs a real sync through the server.
+   * Marks a coach message read.
    *
-   * The previous handler wrote a timestamp directly, so the button looked like it worked while no
-   * provider was ever contacted. It now calls the sync endpoint and reports what happened,
-   * including a partial import.
+   * Phase 20: this used to share one `deviceError` slot with the health device cards, which meant a
+   * failure to mark a message read could be reported under a heading about connected devices. The
+   * two concerns now have separate state, and the health actions live in HealthIntegrationsPanel.
    */
-  async function syncDevice(d: HealthDevice) {
-    setSyncing(d.id);
-    setDeviceError(null);
-    try {
-      const result = await syncHealthDevice(d.id);
-      if (result.records_rejected > 0) {
-        setDeviceError(
-          `Sync finished with ${result.records_rejected} record(s) rejected as invalid. Imported data is unaffected.`,
-        );
-      } else if (result.truncated) {
-        setDeviceError("This device had more data than one sync can fetch. Run sync again to continue.");
-      }
-      onRefresh();
-    } catch (err) {
-      setDeviceError(healthErrorMessage(err, "sync"));
-    } finally {
-      // finally, not a trailing statement: a thrown error must not leave the button disabled.
-      setSyncing(null);
-    }
-  }
-
-  /**
-   * Disconnects the connection and stops future syncing.
-   *
-   * Imported history is kept, so the UI says so rather than implying the data was deleted.
-   */
-  async function disconnectDevice(d: HealthDevice) {
-    setSyncing(d.id);
-    setDeviceError(null);
-    try {
-      await deleteHealthDevice(d.id);
-      onRefresh();
-    } catch (err) {
-      setDeviceError(healthErrorMessage(err, "disconnect"));
-    } finally {
-      setSyncing(null);
-    }
-  }
-
   async function markRead(n: CoachNotification) {
     if (n.is_read) return;
-    setDeviceError(null);
+    setCoachReadError(null);
     const { error } = await apiData.from("coach_notifications").update({ is_read: true }).eq("id", n.id);
     if (error) {
-      setDeviceError("That message could not be marked as read. Please try again.");
+      setCoachReadError("That message could not be marked as read. Please try again.");
       return;
     }
     onRefresh();
@@ -420,133 +370,21 @@ const [pushNotice, setPushNotice] = useState<string | null>(null);
         </div>
       </div>
 
-      {/* Connected devices */}
-      <div className="card">
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-          <Watch size={18} color="#4ade80" />
-          <span style={{ fontSize: 15, fontWeight: 700, color: "#f0f6fc" }}>Connected devices</span>
-        </div>
-        <p style={{ fontSize: 13, color: "#94a3b8", margin: "0 0 18px", lineHeight: 1.55 }}>
-          Data from these sources is labeled as imported. Anything you type in manually stays marked as manual entry.
-        </p>
-        {deviceError && (
-          <div className="form-error" role="alert" style={{ marginBottom: 16 }}>
-            <AlertTriangle size={16} />
-            <span>{deviceError}</span>
-          </div>
-        )}
-        <div className="flex-col" style={{ gap: 10 }}>
-          {devices.length === 0 ? (
-            <EmptyState
-              icon={<Watch size={28} color="#64748b" />}
-              title="No devices connected"
-              message="Connect a watch, heart rate strap, or scale to bring your data together."
-            />
-          ) : (
-            devices.map((d) => (
-              <div className="workout-item" key={d.id}>
-                <div
-                  className="workout-icon"
-                  style={{
-                    background: d.status === "Connected" ? "rgba(74,222,128,0.14)" : "rgba(148,163,184,0.1)",
-                    color: d.status === "Connected" ? "#4ade80" : "#94a3b8",
-                  }}
-                >
-                  {d.status === "Connected" ? <PlugZap size={20} /> : <Plug size={20} />}
-                </div>
-                <div className="workout-info">
-                  <div className="workout-title">{d.device_name}</div>
-                  <div className="workout-meta">
-                    <span>{d.device_type}</span>
-                    <span>{d.last_sync_at ? `Last sync ${relativeTime(d.last_sync_at)}` : "Never synced"}</span>
-                    <span className="badge" style={{ background: `${syncStateLabel(d).tone}22`, color: syncStateLabel(d).tone }}>
-                      {syncStateLabel(d).label}
-                    </span>
-                  </div>
-                  {d.last_error && (
-                    <p className="stat-meta" role="status">
-                      Last sync could not complete ({d.last_error.replace(/_/g, " ")}).
-                    </p>
-                  )}
-                  {/* Device-reported permission state (D10). Phrased as what the app reports,
-                      because the server cannot verify Android Health Connect permissions itself. */}
-                  {permissionStateLabel(d.permission_status) && (
-                    <p className="stat-meta" role="status">
-                      <span
-                        className="badge"
-                        style={{
-                          background:
-                            d.permission_status === "permission_revoked"
-                              ? "rgba(248,113,113,0.16)"
-                              : "rgba(251,191,36,0.16)",
-                          color: d.permission_status === "permission_revoked" ? "#f87171" : "#fbbf24",
-                        }}
-                      >
-                        {permissionStateLabel(d.permission_status)}
-                      </span>{" "}
-                      {permissionStateNotice(d.permission_status)}
-                    </p>
-                  )}
-                </div>
-                <div style={{ display: "flex", gap: 8 }}>
-                  {d.status === "Connected" && (
-                    <button className="btn btn-secondary btn-sm" onClick={() => syncDevice(d)} disabled={syncing === d.id}>
-                      <RefreshCw size={14} /> {syncing === d.id ? "Syncing" : "Sync"}
-                    </button>
-                  )}
-                  <button
-                    className="btn btn-secondary btn-sm"
-                    onClick={() => disconnectDevice(d)}
-                    disabled={syncing === d.id}
-                    title={DISCONNECT_RETENTION_NOTICE}
-                  >
-                    Disconnect
-                  </button>
-                </div>
-              </div>
-            ))
-          )}
-          <p className="stat-meta" style={{ marginTop: 12 }}>
-            {DISCONNECT_RETENTION_NOTICE}
-          </p>
-        </div>
-      </div>
 
-      {/* Device integration status */}
-      <div className="card">
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-          <Watch size={18} color="#38bdf8" />
-          <span style={{ fontSize: 15, fontWeight: 700, color: "#f0f6fc" }}>Automatic device sync</span>
-        </div>
-        <p style={{ fontSize: 13, color: "#94a3b8", margin: "0 0 16px", lineHeight: 1.55 }}>
-          Where each health platform currently stands. FitTrack does not pretend to sync a platform it cannot
-          actually reach, so each one below states exactly what it would need.
-        </p>
-        <div className="flex-col" style={{ gap: 10 }}>
-          {HEALTH_PROVIDERS.map((p) => (
-            <div className="provider-card" key={p.id}>
-              <div
-                className="stat-icon"
-                style={{ background: `${statusTone(p.status)}22`, color: statusTone(p.status) }}
-              >
-                <Watch size={17} />
-              </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                  <span style={{ fontSize: 14, fontWeight: 700, color: "#f0f6fc" }}>{p.label}</span>
-                  <span
-                    className="badge"
-                    style={{ background: `${statusTone(p.status)}22`, color: statusTone(p.status) }}
-                  >
-                    {statusLabel(p.status)}
-                  </span>
-                </div>
-                <p className="provider-boundary">{p.boundary}</p>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
+      {/* Phase 20: the health integrations surface replaces the two cards that used to sit here.
+
+          The old "Connected devices" card listed devices and offered sync and disconnect, and the old
+          "Automatic device sync" card listed providers from a hardcoded array in healthProviders.ts.
+          Both are now served by GET /api/v1/health/integrations and merged into one panel, because a
+          provider and the connections to it are one fact about the user rather than two separate lists
+          a client has to correlate - and a client-side correlation is exactly where a provider the
+          server would reject could slip through.
+
+          The two actions stay on the same endpoints as before - POST /health/devices,
+          POST /health/devices/{id}/sync and DELETE /health/devices/{id} - so no route, no validation
+          rule and no ownership check changed. The panel re-reads from the server after each action
+          rather than optimistically editing a local list. */}
+      <HealthIntegrationsPanel onRefresh={onRefresh} />
 
       {/* Coaching */}
       <div className="card">
@@ -561,6 +399,12 @@ const [pushNotice, setPushNotice] = useState<string | null>(null);
           Personalized notes generated from your recent activity, recovery, and nutrition patterns.
           Ask a question and get tailored guidance from the Coach tab.
         </p>
+        {coachReadError && (
+          <div className="form-error" role="alert" style={{ marginBottom: 16 }}>
+            <AlertTriangle size={16} />
+            <span>{coachReadError}</span>
+          </div>
+        )}
 
         {coachError && (
           <div className="form-error" role="alert" style={{ marginBottom: 16 }}>

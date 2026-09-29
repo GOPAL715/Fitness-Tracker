@@ -1,5 +1,5 @@
 import { apiClient, json } from "./client";
-import type { DailyMetric, HealthDevice, CoachNotification } from "../domain";
+import type { DailyMetric, CoachNotification } from "../domain";
 
 export async function getAppData(): Promise<any> {
   const value = await apiClient<any>("/app-data");
@@ -7,7 +7,12 @@ export async function getAppData(): Promise<any> {
 }
 // Profile reads go through getAppData and Profile writes through the apiData adapter in
 // dataAdapter, so this module carries no profile-specific call of its own.
-export async function updateDevice(id: string, patch: Partial<HealthDevice>) { return apiClient<HealthDevice>(`/health-devices/${id}`, { method: "PATCH", ...json(patch) }); }
+//
+// Phase 20: updateDevice was removed from this module. It targeted PATCH /api/v1/health-devices/{id},
+// a hyphenated path that has never existed on the server - the same mistake healthApi.ts had already
+// fixed and documented. It was dead code that pointed at a 404, and leaving it would have invited a
+// second caller to wire up a route that is not there. Health writes go through healthApi.ts and
+// healthIntegrationsApi.ts, which target the served /health/devices routes.
 export async function markNotificationRead(id: string) { return apiClient<CoachNotification>(`/coach-notifications/${id}/read`, { method: "POST" }); }
 export async function analyzeCoach() { return apiClient<any>("/coach/analyze", { method: "POST", ...json({}) }); }
 export async function addWater(todayMetric: DailyMetric | null, oz: number) {
