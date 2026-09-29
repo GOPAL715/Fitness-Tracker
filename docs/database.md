@@ -65,6 +65,8 @@ CHECK constraints.
 | `habit_logs` | daily check-ins, unique per habit per day |
 | `goals` | goal type, start/current/target values, unit, dates and status |
 | `reminders` | type, time, recurring days, quiet hours and enabled flag |
+| `reminder_deliveries` | the per-occurrence delivery ledger: one row per `(reminder_id, occurrence_at)`, carrying `state`, `attempts`, `last_error`, `delivered_at` and `created_at`. The unique key on those two columns is what makes delivery exactly-once — a second scheduler pass for the same occurrence loses the insert and does not call the provider. `failure_category` (V13, nullable) adds the user-facing cause; it is NULL for every successful delivery and for every row recorded before V13. |
+| `push_subscriptions` | browser push endpoints and their decrypting keys, scoped to one user. Never exposed through an API response. |
 | `health_devices` | connected device records: `provider`, `external_device_id`, `sync_status`, `sync_cursor`, `last_error`, `last_sync`. `sync_cursor` is internal and is never returned by the API. |
 | `coach_notifications` | weekly coach reviews and messages |
 

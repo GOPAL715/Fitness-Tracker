@@ -1,5 +1,6 @@
 package com.fittrack.push;
 
+import com.fittrack.reminder.FailureCategory;
 import com.fittrack.reminder.NotificationDeliveryProvider;
 import jakarta.annotation.PostConstruct;
 import nl.martijndwars.webpush.Notification;
@@ -10,6 +11,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -52,6 +54,16 @@ public class WebPushDeliveryProvider implements NotificationDeliveryProvider {
 
     private final PushSubscriptionService subscriptions;
     private final PushProperties properties;
+
+    /**
+     * The category of the current attempt, readable by the delivery service straight after
+     * {@link #deliver} returns on the same thread.
+     *
+     * <p>Thread-local because this provider is a singleton: a plain field would let a second thread's
+     * delivery overwrite the category the first thread is about to record, silently labelling one
+     * user's occurrence with another user's cause.
+     */
+    private final ThreadLocal<FailureCategory> lastCategory = new ThreadLocal<>();
 
     public WebPushDeliveryProvider(PushSubscriptionService subscriptions, PushProperties properties) {
         this.subscriptions = subscriptions;
@@ -104,13 +116,20 @@ public class WebPushDeliveryProvider implements NotificationDeliveryProvider {
             // occurrence closes exactly as it did before Phase 13 rather than being retried forever
             // against a channel that does not exist.
             log.info("web_push_skipped reminder_id={} reason=push_not_configured", request.reminderId());
+            // Deliberately UNKNOWN, not a category of its own. "This deployment has push turned off"
+            // is a server configuration fact reported by GET /api/v1/push/config, not a property of
+            // the user's reminder, so it is not stored against their delivery history.
+            note(FailureCategory.UNKNOWN);
             return Outcome.PERMANENT_FAILURE;
         }
 
         List<PushSubscriptionService.DeliverableSubscription> targets =
                 subscriptions.deliverableForUser(request.userId());
         if (targets.isEmpty()) {
+            // Proven, not inferred: the subscription table was just read and holds nothing for this
+            // user. This is the one cause a user can always fix themselves, by turning notifications on.
             log.info("web_push_no_subscriptions reminder_id={} user_id={}", request.reminderId(), request.userId());
+            note(FailureCategory.NO_SUBSCRIPTION);
             return Outcome.PERMANENT_FAILURE;
         }
 
@@ -125,6 +144,9 @@ public class WebPushDeliveryProvider implements NotificationDeliveryProvider {
             // A malformed or mismatched key pair is a configuration fault, not a per-recipient one.
             // Refusing loudly here is what stops a bad deployment from appearing to work.
             log.error("web_push_configuration_invalid exception_type={}", e.getClass().getSimpleName());
+            // A server-side key fault, not something the user caused or can fix. Reported through
+            // /api/v1/push/config, and deliberately not attributed to their delivery history.
+            note(FailureCategory.UNKNOWN);
             return Outcome.PERMANENT_FAILURE;
         }
 
@@ -136,9 +158,13 @@ public class WebPushDeliveryProvider implements NotificationDeliveryProvider {
         int delivered = 0;
         int temporaryFailures = 0;
         int permanentFailures = 0;
+        // Every category seen this attempt, so the occurrence can be labelled with the most specific
+        // cause that was actually proven rather than whichever device happened to be tried last.
+        List<FailureCategory> observed = new ArrayList<>();
 
         for (PushSubscriptionService.DeliverableSubscription target : targets) {
-            switch (send(pushService, payload, target)) {
+            AttemptResult result = send(pushService, payload, target);
+            switch (result.outcome()) {
                 case DELIVERED -> delivered++;
                 case PERMANENT_FAILURE -> {
                     permanentFailures++;
@@ -150,6 +176,7 @@ public class WebPushDeliveryProvider implements NotificationDeliveryProvider {
                 }
                 default -> temporaryFailures++;
             }
+            observed.add(result.category());
         }
 
         if (delivered > 0) {
@@ -160,17 +187,33 @@ public class WebPushDeliveryProvider implements NotificationDeliveryProvider {
                             + " permanent={} temporary={}",
                     request.reminderId(), request.userId(), request.occurrence(),
                     delivered, permanentFailures, temporaryFailures);
+            // A success has no failure category. The value is cleared rather than left to linger,
+            // so nothing can leak from an earlier occurrence on the same thread.
+            note(FailureCategory.UNKNOWN);
             return Outcome.DELIVERED;
         }
         if (temporaryFailures > 0) {
             log.warn("web_push_temporary_failure reminder_id={} user_id={} occurrence_at={} subscriptions={}",
                     request.reminderId(), request.userId(), request.occurrence(), targets.size());
+            // Every temporary failure was seen in full, so the most specific of them is a proven
+            // cause for the occurrence rather than an average across devices.
+            note(worstOf(observed));
             return Outcome.TEMPORARY_FAILURE;
         }
+        // Every subscription answered 404/410 and was removed. The push service has positively proven
+        // each one can never receive again, which is stronger evidence than any other category here.
         log.warn("web_push_all_subscriptions_invalid reminder_id={} user_id={} occurrence_at={} removed={}",
                 request.reminderId(), request.userId(), request.occurrence(), permanentFailures);
+        note(FailureCategory.INVALID_SUBSCRIPTION);
         return Outcome.PERMANENT_FAILURE;
     }
+
+    /**
+     * One subscription's result: the outcome that drives retry behaviour, and the category that names
+     * the cause. Keeping them in one value is what lets the category be derived from the same branch
+     * that produced the outcome, rather than reconstructed afterwards.
+     */
+    private record AttemptResult(Outcome outcome, FailureCategory category) {}
 
     /**
      * Sends to one subscription and classifies the result.
@@ -179,7 +222,7 @@ public class WebPushDeliveryProvider implements NotificationDeliveryProvider {
      * secret, and the subscription keys are the decrypting half of the subscription, so neither
      * appears in any log line.
      */
-    private Outcome send(PushService pushService, String payload,
+    private AttemptResult send(PushService pushService, String payload,
             PushSubscriptionService.DeliverableSubscription target) {
         // Phase 14: per-attempt timing, measured around the single provider call rather than the
         // whole tick, so an operator can tell a slow push service from a slow database. The delivery
@@ -223,11 +266,11 @@ public class WebPushDeliveryProvider implements NotificationDeliveryProvider {
             }
         } catch (TimeoutException e) {
             logAttempt(target, -1, elapsedMs(startedAt), "timeout");
-            return Outcome.TEMPORARY_FAILURE;
+            return new AttemptResult(Outcome.TEMPORARY_FAILURE, FailureCategory.TEMPORARY_PROVIDER_ERROR);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             logAttempt(target, -1, elapsedMs(startedAt), "interrupted");
-            return Outcome.TEMPORARY_FAILURE;
+            return new AttemptResult(Outcome.TEMPORARY_FAILURE, FailureCategory.TEMPORARY_PROVIDER_ERROR);
         } catch (Exception e) {
             // A send that never completed says nothing about the subscription's validity. Some push
             // services also use a connection failure to signal a dead endpoint, so this stays
@@ -235,11 +278,33 @@ public class WebPushDeliveryProvider implements NotificationDeliveryProvider {
             logAttempt(target, -1, elapsedMs(startedAt), "network_error");
             log.warn("web_push_send_error subscription_id={} exception_type={} duration_ms={}",
                     target.id(), e.getClass().getSimpleName(), elapsedMs(startedAt));
-            return Outcome.TEMPORARY_FAILURE;
+            return new AttemptResult(Outcome.TEMPORARY_FAILURE, FailureCategory.TEMPORARY_PROVIDER_ERROR);
         }
         Outcome outcome = classify(status);
         logAttempt(target, status, elapsedMs(startedAt), null);
-        return outcome;
+        return new AttemptResult(outcome, categoryOf(status));
+    }
+
+    /**
+     * The user-facing cause for a status the push service actually returned.
+     *
+     * <p>Each mapping is a status that <em>means</em> one thing, so none of these is a guess:
+     * 404/410 are defined by the push specifications as removed-or-expired, and 429 is defined as
+     * rate limiting. A status with no single meaning here - an unexpected 4xx, or a response that
+     * could not be read at all - is UNKNOWN rather than being forced into a category, because a wrong
+     * label would tell the user to fix something that is not broken.
+     *
+     * <p>Deliberately NOT inferred from the exception or message text: a cause is only named where a
+     * machine-readable signal already proved it.
+     */
+    private static FailureCategory categoryOf(int status) {
+        if (status == 404 || status == 410) return FailureCategory.INVALID_SUBSCRIPTION;
+        if (status == 429) return FailureCategory.RATE_LIMITED;
+        if (status >= 500 || status == -1) return FailureCategory.TEMPORARY_PROVIDER_ERROR;
+        // 2xx never reaches here, and a 401/403 means this deployment's VAPID key was rejected -
+        // a server fault affecting every user equally, which is reported through
+        // /api/v1/push/config rather than charged to this user's history.
+        return FailureCategory.UNKNOWN;
     }
 
     private static long elapsedMs(long startedAtNanos) {
@@ -276,6 +341,50 @@ public class WebPushDeliveryProvider implements NotificationDeliveryProvider {
         if (outcome == Outcome.DELIVERED) return "delivered";
         if (outcome == Outcome.PERMANENT_FAILURE) return "permanent";
         return "temporary";
+    }
+
+    /**
+     * The most specific cause among several devices' failures.
+     *
+     * <p>Ranked by how actionable the category is for the user, so one throttled device cannot hide a
+     * genuinely dead subscription on another. The ordering only ever chooses a label for an
+     * occurrence that has already failed; it never changes the outcome, which is fixed before this is
+     * called.
+     */
+    private static FailureCategory worstOf(List<FailureCategory> observed) {
+        FailureCategory best = null;
+        for (FailureCategory candidate : observed) {
+            if (best == null || rank(candidate) > rank(best)) best = candidate;
+        }
+        return best == null ? FailureCategory.UNKNOWN : best;
+    }
+
+    private static int rank(FailureCategory category) {
+        return switch (category) {
+            case INVALID_SUBSCRIPTION -> 5;
+            case NO_SUBSCRIPTION -> 4;
+            case RATE_LIMITED -> 3;
+            case TEMPORARY_PROVIDER_ERROR -> 2;
+            case PROVIDER_REJECTED -> 1;
+            case UNKNOWN -> 0;
+        };
+    }
+
+    /**
+     * Records this attempt's category for the caller to read back.
+     *
+     * <p>Held per thread rather than per instance because the provider is a singleton shared by every
+     * scheduled occurrence. It is overwritten on every {@link #deliver} call - including on success -
+     * so a category can never be attributed to an occurrence that did not produce it.
+     */
+    private void note(FailureCategory category) {
+        lastCategory.set(category);
+    }
+
+    @Override
+    public FailureCategory lastFailureCategory() {
+        FailureCategory category = lastCategory.get();
+        return category == null ? FailureCategory.UNKNOWN : category;
     }
 
     /**

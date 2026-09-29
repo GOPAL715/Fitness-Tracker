@@ -2,6 +2,7 @@ package com.fittrack.acceptance;
 
 import com.fittrack.acceptance.support.AbstractAcceptanceTest;
 import com.fittrack.acceptance.support.FakeNotificationProvider;
+import com.fittrack.reminder.FailureCategory;
 import com.fittrack.reminder.ReminderDeliveryService;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.junit.jupiter.api.BeforeEach;
@@ -17,6 +18,7 @@ import org.springframework.http.MediaType;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MvcResult;
 
+import java.sql.Timestamp;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -24,6 +26,8 @@ import java.time.LocalTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -427,5 +431,309 @@ class ReminderDeliveryAcceptanceTest extends AbstractAcceptanceTest {
         String body = getAs(user, "/api/v1/reminders/schedule").getResponse().getContentAsString();
         assertThat(body).doesNotContain("vapid").doesNotContain("endpoint").doesNotContain("authorization")
                 .doesNotContain("private").doesNotContain("secret");
+    }
+
+    // ================================================================
+    // Phase 17: user-facing delivery history and safe failure categories.
+    //
+    // These live in this class rather than one of their own so they share the single deterministic
+    // fake and the pinned clock above. A separate @TestConfiguration would register a second
+    // @Primary provider, and the context would then fail to resolve exactly one.
+    // ================================================================
+
+    /** Drives one occurrence through the real delivery path, as the scheduler would. */
+    private ReminderDeliveryService.DeliveryResult deliverOccurrence(Session owner, UUID reminderId,
+            Instant occurrence) {
+        return delivery.deliver(reminderId, UUID.fromString(owner.id()),
+                "Time to train", "Session starts now", occurrence);
+    }
+
+    private UUID phase17Reminder(Session owner) throws Exception {
+        return createReminder(owner, reminder("06:00", "1,2,3,4,5", "Asia/Kolkata", "daily"));
+    }
+
+    private String storedCategory(UUID reminderId, Instant occurrence) {
+        return jdbc.queryForObject(
+                "select failure_category from reminder_deliveries where reminder_id=? and occurrence_at=?",
+                String.class, reminderId, Timestamp.from(occurrence));
+    }
+
+    private String storedReason(UUID reminderId, Instant occurrence) {
+        return jdbc.queryForObject(
+                "select last_error from reminder_deliveries where reminder_id=? and occurrence_at=?",
+                String.class, reminderId, Timestamp.from(occurrence));
+    }
+
+    /** A record exactly as it existed before the failure_category column was added. */
+    private void insertLegacyOccurrence(UUID reminderId, UUID userId, Instant occurrence, String state) {
+        jdbc.update("insert into reminder_deliveries(id,reminder_id,user_id,occurrence_at,state,attempts,last_error)"
+                        + " values (?,?,?,?,?,?,?)",
+                UUID.randomUUID(), reminderId, userId, Timestamp.from(occurrence), state, 1, "permanent");
+    }
+
+    private JsonNode historyPage(Session owner, UUID reminderId, String query) throws Exception {
+        return json(getAs(owner, "/api/v1/reminders/" + reminderId + "/delivery-history" + query));
+    }
+
+    @Test
+    @DisplayName("Phase 17 - a delivered occurrence stores no failure category")
+    void deliveredStoresNoCategory() throws Exception {
+        Session owner = register("p17-delivered");
+        UUID reminderId = phase17Reminder(owner);
+        Instant occurrence = Instant.parse("2026-09-20T00:30:00Z");
+
+        deliverOccurrence(owner, reminderId, occurrence);
+
+        // NULL because a delivery that worked has no failure to categorise.
+        assertThat(storedCategory(reminderId, occurrence)).isNull();
+        assertThat(storedReason(reminderId, occurrence)).isNull();
+    }
+
+    @Test
+    @DisplayName("Phase 17 - a permanent failure stores the category alongside the coarse reason")
+    void permanentFailureStoresCategory() throws Exception {
+        Session owner = register("p17-permanent");
+        UUID reminderId = phase17Reminder(owner);
+        Instant occurrence = Instant.parse("2026-09-21T00:30:00Z");
+        provider.use(FakeNotificationProvider.Mode.PERMANENT_FAILURE);
+        provider.reportCategory(FailureCategory.NO_SUBSCRIPTION);
+
+        deliverOccurrence(owner, reminderId, occurrence);
+
+        assertThat(storedCategory(reminderId, occurrence)).isEqualTo("NO_SUBSCRIPTION");
+        // The pre-existing coarse reason is preserved verbatim, so nothing that reads it changes.
+        assertThat(storedReason(reminderId, occurrence)).isEqualTo("permanent");
+    }
+
+    /**
+     * Every category the Web Push provider can actually distinguish, driven through the real delivery
+     * path. Each asserts the stored column, so a later change that stops persisting one of them fails
+     * here rather than silently degrading a user's history.
+     */
+    @Test
+    @DisplayName("Phase 17 - every distinguishable category is persisted on its own occurrence")
+    void allDistinguishableCategoriesArePersisted() throws Exception {
+        Session owner = register("p17-categories");
+        UUID reminderId = phase17Reminder(owner);
+        Instant base = Instant.parse("2026-09-01T00:30:00Z");
+
+        Map<FailureCategory, FakeNotificationProvider.Mode> cases = new LinkedHashMap<>();
+        cases.put(FailureCategory.NO_SUBSCRIPTION, FakeNotificationProvider.Mode.PERMANENT_FAILURE);
+        cases.put(FailureCategory.INVALID_SUBSCRIPTION, FakeNotificationProvider.Mode.PERMANENT_FAILURE);
+        cases.put(FailureCategory.RATE_LIMITED, FakeNotificationProvider.Mode.TEMPORARY_FAILURE);
+        cases.put(FailureCategory.TEMPORARY_PROVIDER_ERROR, FakeNotificationProvider.Mode.TEMPORARY_FAILURE);
+        cases.put(FailureCategory.PROVIDER_REJECTED, FakeNotificationProvider.Mode.PERMANENT_FAILURE);
+
+        int index = 0;
+        for (Map.Entry<FailureCategory, FakeNotificationProvider.Mode> testCase : cases.entrySet()) {
+            Instant occurrence = base.plusSeconds(86400L * index++);
+            provider.use(testCase.getValue());
+            provider.reportCategory(testCase.getKey());
+
+            deliverOccurrence(owner, reminderId, occurrence);
+
+            assertThat(storedCategory(reminderId, occurrence))
+                    .as("category for %s", testCase.getKey())
+                    .isEqualTo(testCase.getKey().name());
+        }
+    }
+
+    @Test
+    @DisplayName("Phase 17 - a provider that reports no cause stores UNKNOWN rather than guessing")
+    void unspecifiedFailureStoresUnknown() throws Exception {
+        Session owner = register("p17-unknown");
+        UUID reminderId = phase17Reminder(owner);
+        Instant occurrence = Instant.parse("2026-09-22T00:30:00Z");
+        provider.use(FakeNotificationProvider.Mode.PERMANENT_FAILURE);
+        provider.reportCategory(null);
+
+        deliverOccurrence(owner, reminderId, occurrence);
+
+        assertThat(storedCategory(reminderId, occurrence)).isEqualTo("UNKNOWN");
+    }
+
+    /**
+     * A provider that throws must never be classified from its message. It never reached the push
+     * service, so a category configured for an earlier attempt is discarded rather than kept.
+     */
+    @Test
+    @DisplayName("Phase 17 - a throwing provider is never classified from its exception message")
+    void throwingProviderStoresUnknown() throws Exception {
+        Session owner = register("p17-throwing");
+        UUID reminderId = phase17Reminder(owner);
+        Instant occurrence = Instant.parse("2026-09-23T00:30:00Z");
+        provider.reportCategory(FailureCategory.RATE_LIMITED);
+        provider.use(FakeNotificationProvider.Mode.THROWING);
+
+        deliverOccurrence(owner, reminderId, occurrence);
+
+        // Not RATE_LIMITED, and not read from the message "push channel exploded".
+        assertThat(storedCategory(reminderId, occurrence)).isEqualTo("UNKNOWN");
+    }
+
+    @Test
+    @DisplayName("Phase 17 - an exhausted retry budget keeps the final attempt's category")
+    void exhaustedStoresFinalAttemptCategory() throws Exception {
+        Session owner = register("p17-exhausted");
+        UUID reminderId = phase17Reminder(owner);
+        Instant occurrence = Instant.parse("2026-09-24T00:30:00Z");
+        provider.use(FakeNotificationProvider.Mode.TEMPORARY_FAILURE);
+        provider.reportCategory(FailureCategory.TEMPORARY_PROVIDER_ERROR);
+
+        ReminderDeliveryService.DeliveryResult result = deliverOccurrence(owner, reminderId, occurrence);
+
+        assertThat(result.state()).isEqualTo("exhausted");
+        assertThat(result.attempts()).isEqualTo(3);
+        assertThat(storedCategory(reminderId, occurrence)).isEqualTo("TEMPORARY_PROVIDER_ERROR");
+        // The coarse reason on this path is unchanged from before Phase 17.
+        assertThat(storedReason(reminderId, occurrence)).isEqualTo("temporary");
+    }
+
+    @Test
+    @DisplayName("Phase 17 - history returns the caller's occurrences, newest first, with safe categories")
+    void historyReturnsOccurrencesNewestFirst() throws Exception {
+        Session owner = register("p17-history");
+        UUID reminderId = phase17Reminder(owner);
+        Instant older = Instant.parse("2026-09-10T00:30:00Z");
+        Instant newer = Instant.parse("2026-09-11T00:30:00Z");
+
+        deliverOccurrence(owner, reminderId, older);
+        provider.use(FakeNotificationProvider.Mode.PERMANENT_FAILURE);
+        provider.reportCategory(FailureCategory.INVALID_SUBSCRIPTION);
+        deliverOccurrence(owner, reminderId, newer);
+
+        JsonNode body = historyPage(owner, reminderId, "");
+
+        assertThat(body.path("attempts")).hasSize(2);
+        assertThat(body.path("attempts").get(0).path("occurrenceAt").asText()).startsWith("2026-09-11");
+        assertThat(body.path("attempts").get(0).path("failureCategory").asText())
+                .isEqualTo("INVALID_SUBSCRIPTION");
+        assertThat(body.path("attempts").get(0).path("state").asText()).isEqualTo("failed");
+        // A success has no category, so the API reports UNKNOWN rather than omitting the field.
+        assertThat(body.path("attempts").get(1).path("failureCategory").asText()).isEqualTo("UNKNOWN");
+        assertThat(body.path("attempts").get(1).path("state").asText()).isEqualTo("delivered");
+        assertThat(body.path("attempts").get(1).path("deliveredAt").isNull()).isFalse();
+        assertThat(body.path("hasMore").asBoolean()).isFalse();
+    }
+
+    @Test
+    @DisplayName("Phase 17 - history never exposes a provider message, endpoint or secret")
+    void historyExposesNoProviderDetail() throws Exception {
+        Session owner = register("p17-nosecret");
+        UUID reminderId = phase17Reminder(owner);
+        Instant occurrence = Instant.parse("2026-09-12T00:30:00Z");
+        provider.use(FakeNotificationProvider.Mode.PERMANENT_FAILURE);
+        provider.reportCategory(FailureCategory.INVALID_SUBSCRIPTION);
+        deliverOccurrence(owner, reminderId, occurrence);
+
+        String raw = getAs(owner, "/api/v1/reminders/" + reminderId + "/delivery-history")
+                .getResponse().getContentAsString();
+
+        // The coarse reason is the only free-text field, and it comes from a fixed vocabulary.
+        assertThat(raw).doesNotContain("https://").doesNotContain("p256dh").doesNotContain("auth_secret");
+        assertThat(raw).contains("INVALID_SUBSCRIPTION").contains("permanent");
+    }
+
+    @Test
+    @DisplayName("Phase 17 - history paginates without skipping or repeating an occurrence")
+    void historyPaginates() throws Exception {
+        Session owner = register("p17-paging");
+        UUID reminderId = phase17Reminder(owner);
+        Instant base = Instant.parse("2026-09-01T00:30:00Z");
+        for (int i = 0; i < 5; i++) {
+            deliverOccurrence(owner, reminderId, base.plusSeconds(86400L * i));
+        }
+
+        JsonNode first = historyPage(owner, reminderId, "?limit=2&offset=0");
+        JsonNode second = historyPage(owner, reminderId, "?limit=2&offset=2");
+        JsonNode last = historyPage(owner, reminderId, "?limit=2&offset=4");
+
+        assertThat(first.path("attempts")).hasSize(2);
+        assertThat(first.path("hasMore").asBoolean()).isTrue();
+        assertThat(second.path("attempts")).hasSize(2);
+        assertThat(second.path("hasMore").asBoolean()).isTrue();
+        assertThat(last.path("attempts")).hasSize(1);
+        assertThat(last.path("hasMore").asBoolean()).isFalse();
+
+        // Disjoint pages: all five occurrences appear exactly once, newest first.
+        List<String> seen = new ArrayList<>();
+        for (JsonNode body : List.of(first, second, last)) {
+            body.path("attempts").forEach(node -> seen.add(node.path("occurrenceAt").asText()));
+        }
+        assertThat(seen).hasSize(5).doesNotHaveDuplicates();
+        assertThat(seen).isSortedAccordingTo((left, right) -> right.compareTo(left));
+    }
+
+    @Test
+    @DisplayName("Phase 17 - history is capped so an unbounded read cannot be requested")
+    void historyLimitIsBounded() throws Exception {
+        Session owner = register("p17-bounded");
+        UUID reminderId = phase17Reminder(owner);
+        deliverOccurrence(owner, reminderId, Instant.parse("2026-09-05T00:30:00Z"));
+
+        // The request asked for 9999; the server answered with its own cap.
+        assertThat(historyPage(owner, reminderId, "?limit=9999").path("limit").asInt()).isEqualTo(100);
+    }
+
+    @Test
+    @DisplayName("Phase 17 - a record predating the column reads back as UNKNOWN and still renders")
+    void legacyRecordReadsBackAsUnknown() throws Exception {
+        Session owner = register("p17-legacy");
+        UUID reminderId = phase17Reminder(owner);
+        insertLegacyOccurrence(reminderId, UUID.fromString(owner.id()),
+                Instant.parse("2026-08-01T00:30:00Z"), "failed");
+
+        JsonNode body = historyPage(owner, reminderId, "");
+
+        assertThat(body.path("attempts")).hasSize(1);
+        // The column is NULL for every row recorded before Phase 17, and NULL is reported as UNKNOWN.
+        assertThat(body.path("attempts").get(0).path("failureCategory").asText()).isEqualTo("UNKNOWN");
+        assertThat(body.path("attempts").get(0).path("state").asText()).isEqualTo("failed");
+    }
+
+    @Test
+    @DisplayName("Phase 17 - one user's history is not readable by another")
+    void historyIsOwnerScoped() throws Exception {
+        Session owner = register("p17-owner");
+        Session other = register("p17-other");
+        UUID reminderId = phase17Reminder(owner);
+        deliverOccurrence(owner, reminderId, Instant.parse("2026-09-15T00:30:00Z"));
+
+        // The other user cannot read this reminder's history...
+        assertStatus(getAs(other, "/api/v1/reminders/" + reminderId + "/delivery-history"), 404);
+        // ...and gets the same 404 as for a reminder that does not exist, so this route cannot be
+        // used to discover that someone else's reminder is real.
+        assertStatus(getAs(other, "/api/v1/reminders/" + UUID.randomUUID() + "/delivery-history"), 404);
+    }
+
+    @Test
+    @DisplayName("Phase 17 - history requires an authenticated session")
+    void historyRequiresAuthentication() throws Exception {
+        Session owner = register("p17-anon");
+        UUID reminderId = phase17Reminder(owner);
+
+        assertUnauthenticated(get("/api/v1/reminders/" + reminderId + "/delivery-history"));
+    }
+
+    @Test
+    @DisplayName("Phase 17 - history is read-only: a write verb cannot alter recorded state")
+    void historyIsReadOnly() throws Exception {
+        Session owner = register("p17-readonly");
+        UUID reminderId = phase17Reminder(owner);
+        Instant occurrence = Instant.parse("2026-09-16T00:30:00Z");
+        provider.use(FakeNotificationProvider.Mode.PERMANENT_FAILURE);
+        provider.reportCategory(FailureCategory.NO_SUBSCRIPTION);
+        deliverOccurrence(owner, reminderId, occurrence);
+
+        call(owner, post("/api/v1/reminders/" + reminderId + "/delivery-history")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"state\":\"delivered\",\"failureCategory\":\"RATE_LIMITED\"}"));
+        call(owner, put("/api/v1/reminders/" + reminderId + "/delivery-history")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"state\":\"delivered\"}"));
+
+        // The stored occurrence is exactly what the scheduler wrote.
+        assertThat(storedCategory(reminderId, occurrence)).isEqualTo("NO_SUBSCRIPTION");
+        assertThat(storedReason(reminderId, occurrence)).isEqualTo("permanent");
     }
 }

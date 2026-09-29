@@ -12,9 +12,18 @@ import { cleanup, render, screen, waitFor } from "@testing-library/react";
 
 import ReminderDetailView from "../src/views/ReminderDetailView";
 import { ApiError } from "../src/lib/api/apiClient";
-import { getReminder } from "../src/lib/api/reminderApi";
+import { getReminder, getReminderDeliveryHistory } from "../src/lib/api/reminderApi";
 
-vi.mock("../src/lib/api/reminderApi", () => ({ getReminder: vi.fn() }));
+/**
+ * The view reads the reminder and its delivery history independently, so both are stubbed. History
+ * resolves empty here: these cases are about the reminder itself, and the empty history exercises the
+ * view's own "nothing recorded yet" path.
+ */
+vi.mock("../src/lib/api/reminderApi", () => ({
+  getReminder: vi.fn(),
+  getReminderDeliveryHistory: vi.fn(() =>
+    Promise.resolve({ attempts: [], limit: 20, offset: 0, hasMore: false })),
+}));
 
 const mockGet = vi.mocked(getReminder);
 const ID = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
@@ -64,7 +73,9 @@ describe("reminder detail view", () => {
     expect(screen.getByText(/Active/)).toBeTruthy();
     expect(screen.getByText(/workout/)).toBeTruthy();
     expect(screen.getByText("Asia/Kolkata")).toBeTruthy();
-    expect(screen.getByText("delivered")).toBeTruthy();
+    // The delivery state is shown as a sentence, not the raw stored value: Phase 17 replaced the
+    // machine string a user could not interpret with wording that says what it means.
+    expect(screen.getByText("Delivered")).toBeTruthy();
     expect(screen.getByText("06:00 on 1, 2, 3, 4, 5, 6, 0")).toBeTruthy();
     expect(mockGet).toHaveBeenCalledWith(ID);
   });

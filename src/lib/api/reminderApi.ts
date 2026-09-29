@@ -45,6 +45,56 @@ export type ReminderWrite = {
   recurrence?: string;
 };
 
+/**
+ * Why an occurrence failed, as the server names it.
+ *
+ * <p>A closed vocabulary on purpose. The server never sends provider text, exception messages or
+ * anything else that could vary between runs, so this union is exhaustive by construction and the UI
+ * can render a real sentence for every value instead of echoing a machine string. `UNKNOWN` is a real
+ * answer, not a fallback for a missing field: it is what the server reports for a record written
+ * before categories existed, or for a failure it genuinely could not name.
+ */
+export type FailureCategory =
+  | "NO_SUBSCRIPTION"
+  | "INVALID_SUBSCRIPTION"
+  | "RATE_LIMITED"
+  | "TEMPORARY_PROVIDER_ERROR"
+  | "PROVIDER_REJECTED"
+  | "UNKNOWN";
+
+/** One scheduled occurrence and what happened when it was delivered. */
+export type DeliveryAttempt = {
+  occurrenceAt: string;
+  state: string;
+  attempts: number;
+  reason?: string | null;
+  failureCategory: FailureCategory;
+  deliveredAt?: string | null;
+  recordedAt?: string | null;
+};
+
+/** One bounded page of a reminder's delivery history, newest first. */
+export type DeliveryHistory = {
+  attempts: DeliveryAttempt[];
+  limit: number;
+  offset: number;
+  hasMore: boolean;
+};
+
+/**
+ * A reminder's delivery history, newest occurrence first.
+ *
+ * <p>Paginated rather than returned whole: the ledger grows by one row per scheduled occurrence, so an
+ * unbounded read would eventually return a reminder's entire life. `hasMore` drives a "load more"
+ * control, and `offset` is advanced by the page size the server reports.
+ *
+ * <p>Scoped server-side to the caller, so a 404 is the answer for another user's reminder.
+ */
+export const getReminderDeliveryHistory = (id: string, limit = 20, offset = 0) =>
+  apiClient<DeliveryHistory>(
+    `${resource}/${id}/delivery-history?limit=${encodeURIComponent(limit)}&offset=${encodeURIComponent(offset)}`
+  );
+
 export const listReminders = () => apiClient<Reminder[]>(resource);
 
 /**

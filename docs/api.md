@@ -47,6 +47,51 @@ Credential records are validated by the auth service, including required values 
 length. Scanner file validation checks declared MIME type, byte signature, and the 8 MiB limit; it does not
 fully decode images.
 
+## Reminder delivery history
+
+```
+GET /api/v1/reminders/{id}/delivery-history?limit=20&offset=0
+```
+
+Returns the caller's recorded occurrences for one reminder, newest first, paginated. Scoped to the
+owner in the query: another user's reminder answers `404`, the same as an id that does not exist.
+`limit` is capped server-side at 100; `hasMore` reports whether a further page exists.
+
+```json
+{
+  "attempts": [
+    {
+      "occurrenceAt": "2026-09-29T01:30:00Z",
+      "state": "failed",
+      "attempts": 1,
+      "reason": "permanent",
+      "failureCategory": "INVALID_SUBSCRIPTION",
+      "deliveredAt": null,
+      "recordedAt": "2026-09-29T01:30:01Z"
+    }
+  ],
+  "limit": 20,
+  "offset": 0,
+  "hasMore": false
+}
+```
+
+`state` is the recorded outcome: `delivered`, `failed` (permanent, never retried), `exhausted` (the
+retry budget was spent) or `pending` (claimed, not yet finished).
+
+`failureCategory` is a closed vocabulary naming the cause in terms the user can act on:
+`NO_SUBSCRIPTION`, `INVALID_SUBSCRIPTION`, `RATE_LIMITED`, `TEMPORARY_PROVIDER_ERROR`,
+`PROVIDER_REJECTED` or `UNKNOWN`. A successful delivery has no category, and `UNKNOWN` is also what
+every record predating the field reports — it is never filled in by guesswork.
+
+`reason` is the coarse value that predates this endpoint (`permanent`, `temporary`, `provider_error`),
+retained for backward compatibility. No provider message, exception text, push endpoint, subscription
+key or token is ever returned or logged through this route.
+
+Push being enabled or disabled on the server is reported separately by `GET /api/v1/push/config`; it is
+deliberately not recorded as a per-reminder delivery failure, because it is a property of the
+deployment rather than of the user's reminder.
+
 ## Resource contract notes
 
 The Spring backend implements the active frontend resource matrix. Owned resources are exposed under the

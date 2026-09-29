@@ -1,5 +1,6 @@
 package com.fittrack.acceptance.support;
 
+import com.fittrack.reminder.FailureCategory;
 import com.fittrack.reminder.NotificationDeliveryProvider;
 
 import java.util.List;
@@ -22,18 +23,33 @@ public class FakeNotificationProvider implements NotificationDeliveryProvider {
     private final List<DeliveryRequest> attempts = new CopyOnWriteArrayList<>();
     private final AtomicInteger calls = new AtomicInteger();
     private volatile Mode mode = Mode.DELIVERED;
+    private volatile FailureCategory category;
 
     /** Number of leading attempts that fail temporarily before succeeding. */
     private volatile int temporaryFailuresBeforeSuccess = 0;
 
     public void reset() {
         mode = Mode.DELIVERED;
+        category = null;
         temporaryFailuresBeforeSuccess = 0;
         calls.set(0);
         attempts.clear();
     }
 
     public void use(Mode selected) { this.mode = selected; }
+
+    /**
+     * The category this channel reports alongside each outcome.
+     *
+     * <p>Left null by default, so the inherited default applies and existing tests keep seeing
+     * UNKNOWN exactly as a provider that reports no reason would.
+     */
+    public void reportCategory(FailureCategory selected) { this.category = selected; }
+
+    @Override
+    public FailureCategory lastFailureCategory() {
+        return category == null ? FailureCategory.UNKNOWN : category;
+    }
 
     /** Fails {@code count} times temporarily, then delivers. */
     public void failTemporarilyThenSucceed(int count) {

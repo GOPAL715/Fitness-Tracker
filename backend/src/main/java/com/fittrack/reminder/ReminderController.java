@@ -34,6 +34,7 @@ public class ReminderController {
 
     private final JdbcTemplate jdbc;
     private final Clock clock;
+    private final ReminderDeliveryService deliveries;
 
     /**
      * The clock is injected rather than read statically so the reference instant is a collaborator.
@@ -43,9 +44,10 @@ public class ReminderController {
      * time of day the suite happens to run. Production supplies {@link Clock#systemUTC()}, which is
      * exactly what {@code Instant.now()} returned, so behaviour is unchanged.
      */
-    public ReminderController(JdbcTemplate jdbc, Clock clock) {
+    public ReminderController(JdbcTemplate jdbc, Clock clock, ReminderDeliveryService deliveries) {
         this.jdbc = jdbc;
         this.clock = clock;
+        this.deliveries = deliveries;
     }
 
     @GetMapping("/schedule")
@@ -82,6 +84,27 @@ public class ReminderController {
         jdbc.update("update reminders set next_occurrence_at=? where id=? and user_id=CAST(? AS uuid)",
                 Timestamp.from(next), id, owner);
         return Map.of("id", id, "next_occurrence_at", next, "timezone", reminder.get("timezone"));
+    }
+
+    /**
+     * The caller's delivery history for one reminder, newest first.
+     *
+     * <p>Ownership is enforced by {@link #owned} before any history is read, so a reminder belonging
+     * to another user is indistinguishable from one that does not exist - the same 404 the reschedule
+     * endpoint already returns, and no enumeration oracle.
+     *
+     * <p>Returns a closed vocabulary of causes. Provider messages, exception text, push endpoints and
+     * subscription keys are never included: they are not selected, so they cannot be leaked by this
+     * route even accidentally.
+     */
+    @GetMapping("/{id}/delivery-history")
+    public ReminderDeliveryService.DeliveryHistory history(@PathVariable UUID id,
+            @RequestParam(defaultValue = "20") int limit,
+            @RequestParam(defaultValue = "0") int offset,
+            @AuthenticationPrincipal String user) {
+        UUID owner = uuid(user);
+        owned(id, owner);
+        return deliveries.history(id, owner, limit, offset);
     }
 
     /**

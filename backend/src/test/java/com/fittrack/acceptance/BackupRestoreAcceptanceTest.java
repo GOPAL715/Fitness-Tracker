@@ -44,8 +44,10 @@ class BackupRestoreAcceptanceTest extends AbstractAcceptanceTest {
     // device_id columns, the manual-only uniqueness indexes, and the canonical views. Phase 11 adds V11:
         // the user timezone, the Health Connect source-record ledger, and the Android client state columns.
         // Phase 13 adds V12: the push subscription table, unique on endpoint and indexed per user.
+        // Phase 17 adds V13: the nullable reminder_deliveries.failure_category column. It is a nullable
+        // ALTER rather than a new table, so every row recorded before it stays valid.
         assertThat(applied).extracting(row -> String.valueOf(row.get("version")))
-        .containsExactly("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12");
+        .containsExactly("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13");
     }
 
     /**

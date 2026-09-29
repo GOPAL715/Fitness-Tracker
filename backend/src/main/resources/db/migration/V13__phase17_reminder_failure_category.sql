@@ -1,0 +1,26 @@
+-- Phase 17: per-occurrence failure categories for reminder delivery history.
+--
+-- reminder_deliveries is already the occurrence ledger: one row per (reminder, occurrence_at),
+-- carrying state, attempts, last_error, delivered_at and created_at. Phase 17 reads it rather than
+-- duplicating it, so this migration adds no table and changes no delivery behaviour.
+--
+-- The existing last_error column records a coarse reason ("permanent", "temporary", "provider_error")
+-- and is preserved unchanged: existing rows and existing readers keep working, and the coarse
+-- vocabulary stays the backward-compatible summary.
+--
+-- failure_category adds the distinction the coarse reason cannot carry. The delivery path already
+-- knows precisely why a Web Push send failed - it branches on 404/410, 429 and 5xx, and it separately
+-- detects "no subscription" and "push not configured" - but collapsed all of that into one
+-- three-valued reason. Recording the category at the point where that knowledge still exists is the
+-- only place it can be captured accurately; it cannot be reconstructed later from a stored reason.
+--
+-- NULLABLE, and deliberately so:
+--   * every successful delivery stores NULL - success is not a failure and has no category;
+--   * every occurrence recorded before this migration keeps NULL, because its category was never
+--     observed. A NULL on a failed row therefore means "pre-dates the field, or unclassified", and
+--     the API reports that as UNKNOWN rather than inventing a cause. History is never backfilled
+--     with a guess.
+ALTER TABLE reminder_deliveries ADD COLUMN failure_category varchar(32);
+
+-- The history read is always "this reminder, newest first", which the existing
+-- unique (reminder_id, occurrence_at) key already serves as an index. No new index is required.
