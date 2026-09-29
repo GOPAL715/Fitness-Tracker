@@ -30,13 +30,31 @@ public class OwnedResourceService {
      * health metrics, which read through a canonical view so a day holding both a manual and a
      * provider row still yields one row. Writes always use {@code table}, because a view cannot
      * receive an INSERT.
+     *
+     * <p><strong>{@code columns} and {@code readColumns} are deliberately separate (Phase 15).</strong>
+     * {@code columns} is the client <em>write</em> allowlist, enforced in
+     * {@link #values(Spec, Map, boolean)}. {@code readColumns} names columns a client may additionally
+     * <em>read</em> on this resource but must never write.
+     *
+     * <p>Reads issue {@code SELECT t.*}, so a read column is returned whether or not it is listed
+     * here; the read list therefore documents the intended surface rather than enforcing it. That
+     * distinction is the whole point: adding a server-owned column to {@code columns} would open a
+     * write path, whereas adding it here cannot. {@code next_occurrence_at} and {@code delivery_status}
+     * are the reason - both are computed and written by the reminder scheduler, and a client able to
+     * set them could mark its own reminder delivered or move its schedule.
      */
     private record Spec(String table, Scope scope, Set<String> columns, boolean singleton,
-                        String readSource) {
+                        String readSource, Set<String> readColumns) {
         Spec(String table, Scope scope, Set<String> columns, boolean singleton) {
-            this(table, scope, columns, singleton, table);
+            this(table, scope, columns, singleton, table, Set.of());
         }
-        Spec { columns = Set.copyOf(columns); }
+        Spec(String table, Scope scope, Set<String> columns, boolean singleton, String readSource) {
+            this(table, scope, columns, singleton, readSource, Set.of());
+        }
+        Spec {
+            columns = Set.copyOf(columns);
+            readColumns = Set.copyOf(readColumns);
+        }
     }
     private static final String USER_ID = "user_id";
     private static final String ID = "id";
@@ -167,7 +185,12 @@ public class OwnedResourceService {
         // Phase 15: timezone and recurrence are user-settable scheduling inputs. Delivery state
         // (delivery_status, delivery_attempts, last_error, last_delivered_at, next_occurrence_at)
         // is deliberately absent so it stays server-controlled.
-        Map.entry("reminders", owned("reminders", "type,title,message,scheduled_time,days_of_week,enabled,quiet_hours_start,quiet_hours_end,timezone,recurrence")),
+        Map.entry("reminders", new Spec("reminders", Scope.USER,
+                columns("type,title,message,scheduled_time,days_of_week,enabled,quiet_hours_start,quiet_hours_end,timezone,recurrence"),
+                false, "reminders",
+                // Read-only, and deliberately absent from the write allowlist above. The reminder
+                // detail view reads both; nothing a client sends may set either. Phase 15.
+                columns("next_occurrence_at,delivery_status"))),
         Map.entry("health-devices", owned("health_devices", "device_name,device_type,status,last_sync")),
         Map.entry("coach-notifications", owned("coach_notifications", "title,message,kind,is_read")),
         Map.entry("exercises", catalog("exercises", "name,description,muscle_group,secondary_muscles,equipment,difficulty,instructions,is_compound")),
@@ -612,6 +635,11 @@ public class OwnedResourceService {
             String name = entry.getKey();
             if (USER_ID.equals(name)) throw new IllegalArgumentException("user_id is server controlled");
             if ("id".equals(name)) continue;
+            // A read-only column reaching here would mean a client could write server-owned state, so
+            // the rejection says so explicitly rather than looking like an unknown field.
+            if (spec.readColumns().contains(name)) {
+                throw new IllegalArgumentException(name + " is server controlled");
+            }
             if (!spec.columns().contains(name)) throw new IllegalArgumentException("Unsupported field: " + name);
             Object value = entry.getValue();
             if (name.endsWith("_date") || name.equals("metric_date") || name.equals("achieved_date") || name.equals("log_date") || name.equals("start_date") || name.equals("target_date")) {

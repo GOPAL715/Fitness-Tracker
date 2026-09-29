@@ -239,3 +239,35 @@ one `delivered` ledger row per occurrence; exactly one browser notification per 
 click that focuses or opens FitTrack at the root and never navigates externally; 404/410 removing
 the subscription without retry; 429/5xx/timeouts retried without removing it; and no secret
 material in any log line.
+
+---
+
+## 10. Hosting requirement for deep links (Phase 15)
+
+Reminder notifications now deep link to `/reminders/{uuid}` instead of the app root. The repository
+does not establish a deployment target - there is no `vercel.json`, `netlify.toml`, `_redirects` or
+frontend Dockerfile anywhere - so no hosting-specific rewrite has been committed.
+Whoever deploys the frontend **must** configure the platform to serve the SPA entry point for
+unknown paths, or a cold notification tap will return a CDN/server 404 before the app ever loads.
+
+The requirement in one line: a GET for `/reminders/{uuid}` must return `index.html` (HTTP 200), not 404.
+
+Platform notes:
+
+- Vercel: a `vercel.json` with `"rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]`, or
+  the equivalent project "Other" build output setting.
+- Netlify: a `public/_redirects` containing `/*  /index.html  200`.
+- Nginx: `try_files $uri $uri/ /index.html;` in the location block.
+- S3/CloudFront: an error document mapped to `index.html` with a 200 status (a 404 status will not do).
+
+This was verified locally: the production build emits the route, and a focused window is navigated in-app,
+so only the cold-load case depends on the host configuration above.
+
+### Deep-link acceptance
+1. With the app fully closed, tap a reminder notification.
+   - **PASS** if a new window opens on the reminder detail.
+   - **FAIL** if the browser shows a 404 page: the host is not serving `index.html` for this path.
+2. With the app already open, tap a notification.
+   - **PASS** if the existing window focuses and shows the reminder.
+3. Open `/reminders/{some-uuid-they-do-not-own}` while signed in.
+   - **PASS** if the not-found state appears, with no reminder data disclosed.
