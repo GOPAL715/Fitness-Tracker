@@ -17,6 +17,7 @@ import org.springframework.http.MediaType;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MvcResult;
 
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalTime;
@@ -47,6 +48,19 @@ class ReminderDeliveryAcceptanceTest extends AbstractAcceptanceTest {
     static class DeliveryConfig {
         @Bean @Primary
         FakeNotificationProvider fakeNotificationProvider() { return new FakeNotificationProvider(); }
+
+        /**
+         * Pins the reference instant the scheduler resolves "next" against.
+         *
+         * <p>Which occurrence is next depends on the moment the request is served, so a live clock
+         * would make these assertions depend on the time of day CI happens to run. 2026-09-29T20:00Z
+         * is 2026-09-30 01:30 in Asia/Kolkata: after that day's 07:00 has passed locally but before
+         * 07:00 UTC, so both reminders resolve to the same UTC calendar day and the 5h30m offset
+         * between them is exactly 330 minutes. The production default, Clock.systemUTC(), is
+         * behaviourally identical to the Instant.now() it replaced.
+         */
+        @Bean @Primary
+        Clock fixedClock() { return Clock.fixed(Instant.parse("2026-09-29T20:00:00Z"), ZoneOffset.UTC); }
     }
 
     @Autowired FakeNotificationProvider provider;
@@ -135,13 +149,29 @@ class ReminderDeliveryAcceptanceTest extends AbstractAcceptanceTest {
         Instant kolkataNext = nextOccurrence(kolkata);
         Instant utcNext = nextOccurrence(utc);
 
-        // Both fire at 07:00 local, so the UTC one is 5h30m earlier than the Kolkata one.
+        // Both fire at 07:00 local, so on the same UTC day the UTC one is 5h30m earlier.
+        // Pinned reference is 2026-09-29T20:00Z = 2026-09-30 01:30 IST, so both resolve to
+        // 2026-09-30 and the offset is exactly 330 minutes.
         assertThat(Duration.between(kolkataNext, utcNext).toMinutes())
                 .as("Kolkata 07:00 is 01:30 UTC").isEqualTo(330);
         // And the stored instant really is 07:00 in the reminder's own zone.
         assertThat(kolkataNext.atZone(ZoneId.of("Asia/Kolkata")).toLocalTime())
                 .isEqualTo(LocalTime.of(7, 0));
         assertThat(utcNext.atZone(ZoneOffset.UTC).toLocalTime()).isEqualTo(LocalTime.of(7, 0));
+        // Asia/Kolkata is UTC+05:30 with no daylight saving, so 07:00 local is 01:30 UTC.
+        assertThat(kolkataNext.atZone(ZoneId.of("Asia/Kolkata")).getOffset().getTotalSeconds())
+                .as("a half-hour offset is carried, not rounded away").isEqualTo(19800);
+        // Both are the NEXT occurrence: strictly after the pinned reference, never today''s
+        // already-elapsed 07:00. This is the regression the fixed clock makes provable - a
+        // scheduler that returned the passed occurrence would yield a negative delay.
+        Instant reference = Instant.parse("2026-09-29T20:00:00Z");
+        assertThat(kolkataNext).as("Kolkata next is after the reference, not a past occurrence")
+                .isAfter(reference);
+        assertThat(utcNext).as("UTC next is after the reference, not a past occurrence")
+                .isAfter(reference);
+        assertThat(Duration.between(reference, kolkataNext).toMinutes())
+                .as("Kolkata 07:00 on 2026-09-30 is 01:30Z, 330 minutes after the reference")
+                .isEqualTo(330);
         // The server default zone was never consulted.
         assertThat(ZoneId.systemDefault()).isNotNull();
     }

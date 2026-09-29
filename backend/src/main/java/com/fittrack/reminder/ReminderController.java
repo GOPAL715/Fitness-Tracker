@@ -7,6 +7,7 @@ import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.bind.annotation.*;
 
 import java.sql.Timestamp;
+import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalTime;
 import java.util.List;
@@ -32,8 +33,20 @@ public class ReminderController {
                     "last_delivered_at", "next_occurrence_at");
 
     private final JdbcTemplate jdbc;
+    private final Clock clock;
 
-    public ReminderController(JdbcTemplate jdbc) { this.jdbc = jdbc; }
+    /**
+     * The clock is injected rather than read statically so the reference instant is a collaborator.
+     *
+     * <p>Which occurrence is "next" depends entirely on the moment the request is served, so a
+     * wall-clock read here makes the stored value - and any test asserting on it - depend on the
+     * time of day the suite happens to run. Production supplies {@link Clock#systemUTC()}, which is
+     * exactly what {@code Instant.now()} returned, so behaviour is unchanged.
+     */
+    public ReminderController(JdbcTemplate jdbc, Clock clock) {
+        this.jdbc = jdbc;
+        this.clock = clock;
+    }
 
     @GetMapping("/schedule")
     public List<Map<String, Object>> schedule(@AuthenticationPrincipal String user) {
@@ -49,6 +62,11 @@ public class ReminderController {
      * Recomputes and stores the next occurrence for one reminder owned by the caller.
      *
      * <p>The stored instant is derived in the reminder's own zone, never the server's.
+     *
+     * <p>"Next" is the first occurrence strictly after the reference instant, resolved in the
+     * reminder's zone. Two reminders configured for the same local time in different zones can
+     * therefore land on different calendar days relative to UTC - that is correct, not a rounding
+     * error, and is why callers must not assume a fixed offset between two such occurrences.
      */
     @PostMapping("/{id}/reschedule")
     public Map<String, Object> reschedule(@PathVariable UUID id, @AuthenticationPrincipal String user) {
@@ -59,7 +77,7 @@ public class ReminderController {
                 String.valueOf(reminder.get("days_of_week")),
                 ReminderSchedule.Recurrence.parse(String.valueOf(reminder.get("recurrence"))),
                 String.valueOf(reminder.get("timezone")),
-                Instant.now()).orElseThrow(() -> new NoSuchElementException("No future occurrence"));
+                clock.instant()).orElseThrow(() -> new NoSuchElementException("No future occurrence"));
 
         jdbc.update("update reminders set next_occurrence_at=? where id=? and user_id=CAST(? AS uuid)",
                 Timestamp.from(next), id, owner);
