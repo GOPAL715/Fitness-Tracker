@@ -43,8 +43,9 @@ class BackupRestoreAcceptanceTest extends AbstractAcceptanceTest {
     // USDA SR Legacy food catalog. Phase 10 adds V10 for source-aware health storage: the
     // device_id columns, the manual-only uniqueness indexes, and the canonical views. Phase 11 adds V11:
         // the user timezone, the Health Connect source-record ledger, and the Android client state columns.
+        // Phase 13 adds V12: the push subscription table, unique on endpoint and indexed per user.
         assertThat(applied).extracting(row -> String.valueOf(row.get("version")))
-        .containsExactly("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11");
+        .containsExactly("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12");
     }
 
     /**

@@ -59,6 +59,23 @@ app:
     scheduler:
       enabled: ${REMINDER_SCHEDULER_ENABLED:true}
       interval: ${REMINDER_SCHEDULER_INTERVAL:PT60S}
+  # Phase 13 Web Push. Off by default, so a deployment that sets nothing behaves exactly as it did
+  # before push existed: reminders still schedule, delivery still runs, and the occurrence closes
+  # through the existing permanent-failure path rather than being retried against a channel that does
+  # not exist. Incomplete VAPID configuration disables delivery instead of failing startup, so a
+  # missing secret degrades one feature rather than taking down every endpoint.
+  #   subject    operator contact for the push service, per RFC 8292 (mailto: or https:). Never a
+  #              user's address.
+  #   public-key  handed to the browser so it can subscribe. Public by definition.
+  #   private-key signs the VAPID JWT. Server-side only: it is never returned by any endpoint and
+  #              never logged. Generate a pair with:
+  #              openssl ecparam -genkey -name prime256v1 -noout | openssl ec -pubout
+  push:
+    enabled: ${FITTRACK_PUSH_ENABLED:false}
+    vapid:
+      subject: ${FITTRACK_VAPID_SUBJECT:mailto:ops@fittrack.example}
+      public-key: ${FITTRACK_VAPID_PUBLIC_KEY:}
+      private-key: ${FITTRACK_VAPID_PRIVATE_KEY:}
   # Phase 16 production hardening.
   # production=true enables secret validation, HSTS, and prod-only CORS rules. It must be set in
   # every real deployment; it is false locally and in tests.

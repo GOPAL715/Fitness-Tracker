@@ -46,6 +46,69 @@ self.addEventListener("message", (event) => {
   }
 });
 
+// ---------------------------------------------------------------- push
+//
+// Added for reminder notifications (Phase 13). The payload is treated as untrusted throughout: it is
+// parsed defensively, and a click never navigates to a URL the payload supplies. safePath below is
+// what makes an open redirect impossible here.
+
+function safePath(reminderId) {
+  if (typeof reminderId !== "string" || !/^[0-9a-fA-F-]{1,64}$/.test(reminderId)) return "/";
+  return `/reminders/${reminderId}`;
+}
+
+function readPushPayload(event) {
+  if (!event.data) return { title: "FitTrack", body: "You have a reminder", path: "/" };
+  let parsed = null;
+  try {
+    parsed = event.data.json();
+  } catch {
+    parsed = null;
+  }
+  if (!parsed || typeof parsed !== "object") {
+    return {
+      title: "FitTrack",
+      body: event.data.text ? String(event.data.text) : "You have a reminder",
+      path: "/",
+    };
+  }
+  return {
+    title: typeof parsed.title === "string" && parsed.title ? parsed.title : "FitTrack",
+    body: typeof parsed.body === "string" ? parsed.body : "You have a reminder",
+    path: safePath(parsed.reminderId),
+  };
+}
+
+self.addEventListener("push", (event) => {
+  const payload = readPushPayload(event);
+  event.waitUntil(
+    self.registration.showNotification(payload.title, {
+      body: payload.body,
+      icon: "/icon-192.webp",
+      badge: "/icon-192.webp",
+      tag: "fittrack-reminder",
+      data: { path: payload.path },
+    })
+  );
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const target = (event.notification.data && event.notification.data.path) || "/";
+
+  event.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clientList) => {
+      for (const client of clientList) {
+        if (client.url && new URL(client.url).origin === self.location.origin) {
+          if ("focus" in client) return client.focus();
+          if ("navigate" in client) return client.navigate(target);
+        }
+      }
+      return self.clients.openWindow(target);
+    })
+  );
+});
+
 function isPrivateRequest(url) {
   return (
     url.pathname.startsWith("/api/") ||

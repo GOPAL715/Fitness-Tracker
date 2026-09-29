@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { disablePush, enablePush, pushSupport, pushExplainText } from "../lib/push/pushSubscription";
+import type { SupportState } from "../lib/push/pushSubscription";
 import {
   Target,
   Watch,
@@ -114,6 +116,8 @@ export default function ProfileView({ profile, devices, notifications, onRefresh
   const [saved, setSaved] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [syncing, setSyncing] = useState<string | null>(null);
+const [pushState, setPushState] = useState<SupportState>("default");
+const [pushBusy, setPushBusy] = useState(false);
   const { session } = useAuth();
   const [coachError, setCoachError] = useState<string | null>(null);
 
@@ -227,6 +231,28 @@ export default function ProfileView({ profile, devices, notifications, onRefresh
 
   const unread = notifications.filter((n) => !n.is_read).length;
 
+  // Read the current push state on mount. This only inspects: it never prompts, because a permission
+  // prompt raised without the user asking is treated as untrustworthy and usually just gets blocked.
+  useEffect(() => {
+    let active = true;
+    pushSupport()
+      .then((state) => { if (active) setPushState(state); })
+      .catch(() => { if (active) setPushState("unsupported"); });
+    return () => { active = false; };
+  }, []);
+
+  /** The only place permission is ever requested, and only because the user pressed the button. */
+  async function togglePush() {
+    setPushBusy(true);
+    try {
+      setPushState(pushState === "subscribed" ? await disablePush() : await enablePush());
+    } catch {
+      setPushState(pushState);
+    } finally {
+      setPushBusy(false);
+    }
+  }
+
   return (
     <div className="flex-col" style={{ animation: "fadeInUp 0.4s ease both" }}>
       <SectionHeader title="Profile" subtitle="Goals, preferences, connected devices, and coaching" />
@@ -333,6 +359,29 @@ export default function ProfileView({ profile, devices, notifications, onRefresh
             )}
           </div>
         </div>
+      </div>
+
+      {/* Reminder notifications. Permission is requested only when this button is pressed: a prompt
+          the user did not ask for is the fastest way to have notifications blocked permanently. */}
+      <div className="card">
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+          <Bell size={18} color="#4ade80" />
+          <span style={{ fontSize: 15, fontWeight: 700, color: "#f0f6fc" }}>Reminder notifications</span>
+        </div>
+        <p style={{ fontSize: 13, color: "#94a3b8", margin: "0 0 14px", lineHeight: 1.55 }}>
+          {pushExplainText(pushState)}
+        </p>
+        {pushState !== "unsupported" && pushState !== "insecure" && pushState !== "disabled" && (
+          <button
+            className="btn btn-secondary"
+            onClick={togglePush}
+            disabled={pushBusy}
+            style={{ display: "inline-flex", alignItems: "center", gap: 8 }}
+          >
+            <Bell size={15} />
+            {pushState === "subscribed" ? "Turn off on this device" : "Enable reminders"}
+          </button>
+        )}
       </div>
 
       {/* Connected devices */}
