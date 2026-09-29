@@ -116,12 +116,45 @@ public class ReminderDeliveryService {
                 state, attempts, lastError, state, reminderId);
     }
 
-    /** Reminders whose next occurrence is due, oldest first. */
+    /**
+     * Reminders whose next occurrence is due, oldest first.
+     *
+     * <p>{@code next_occurrence_at} is part of the projection because it <em>is</em> the occurrence
+     * being delivered: a caller cannot invoke {@link #deliver} without naming the instant it is
+     * delivering, and re-querying it separately would allow two different instants to be in play
+     * inside one pass.
+     */
     public List<Map<String, Object>> dueReminders(Instant now) {
-        return jdbc.queryForList("select id,user_id,title,message,timezone,recurrence,days_of_week,scheduled_time"
+        return jdbc.queryForList("select id,user_id,title,message,timezone,recurrence,days_of_week,"
+                        + "scheduled_time,next_occurrence_at"
                         + " from reminders where enabled=true and next_occurrence_at is not null"
                         + " and next_occurrence_at<=? order by next_occurrence_at",
                 Timestamp.from(now));
+    }
+
+    /**
+     * Stores the occurrence a subsequent pass should act on, or closes the reminder when {@code
+     * nextOccurrence} is null.
+     *
+     * <p>This lives here rather than in the scheduler so every reminder statement stays in this
+     * service: the scheduler decides when to run, it does not own SQL. The value is computed by the
+     * caller through {@link ReminderSchedule#nextOccurrence}, which is the same calculation the
+     * rescheduling endpoint already uses - there is no second schedule implementation.
+     *
+     * <p>The write is idempotent, so two instances that raced through the same occurrence and both
+     * computed the following one simply store the same instant. Duplicate <em>accounting</em> is
+     * prevented by the unique key on {@code reminder_deliveries}, never by this method.
+     *
+     * @param nextOccurrence the next instant to fire at, or null to stop scheduling the reminder
+     */
+    @Transactional
+    public void updateNextOccurrence(UUID reminderId, Instant nextOccurrence) {
+        if (nextOccurrence == null) {
+            jdbc.update("update reminders set next_occurrence_at=null where id=?", reminderId);
+            return;
+        }
+        jdbc.update("update reminders set next_occurrence_at=? where id=?",
+                Timestamp.from(nextOccurrence), reminderId);
     }
 
     public int maxAttempts() { return maxAttempts; }

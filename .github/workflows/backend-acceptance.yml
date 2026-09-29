@@ -28,3 +28,37 @@ jobs:
         env:
           DOCKER_API_VERSION: '1.40'
         run: mvn -f backend/pom.xml clean test
+
+  frontend:
+    name: Frontend (type-check, tests, build)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      # Node 22, not "latest". vitest 5 declares engines.node as ^22.12.0 || ^24.0.0 || >=26.0.0, so an
+      # unpinned setup-node would eventually install a release this suite cannot run on and report it as
+      # a test failure. 22.12.0 is the floor every current toolchain in the lockfile accepts.
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.12.0'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      # ci, not install: it installs exactly the locked tree and fails if package-lock.json and
+      # package.json disagree, instead of silently resolving something new.
+      - name: Install dependencies
+        run: npm ci
+
+      # A separate type-check step, although the build also runs tsc. A type error is a distinct
+      # failure from a failing test, and naming it here keeps the signal readable in the job summary.
+      - name: Type-check
+        run: npx tsc --noEmit
+
+      - name: Run frontend tests
+        run: npm test
+
+      - name: Build
+        run: npm run build

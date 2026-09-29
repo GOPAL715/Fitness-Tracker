@@ -47,6 +47,18 @@ app:
     pricing:
       input-per-million: ${AI_INPUT_PRICE_PER_MILLION:0}
       output-per-million: ${AI_OUTPUT_PRICE_PER_MILLION:0}
+  # Phase 12 reminder scheduler. The poll runs the delivery pipeline that already exists; it does not
+  # decide what is due or how to send anything.
+  #   enabled   false leaves due reminders untouched - no delivery, no rescheduling. The bean still
+  #             exists, so this is a switch rather than a different build.
+  #   interval  fixed delay between the END of one pass and the start of the next, so a slow provider
+  #             cannot make passes pile up on each other. The first pass also waits one interval, which
+  #             gives a starting instance time to come up before it works through a backlog.
+  #             ISO-8601 duration, accepted by Spring's scheduled-task parsing.
+  reminders:
+    scheduler:
+      enabled: ${REMINDER_SCHEDULER_ENABLED:true}
+      interval: ${REMINDER_SCHEDULER_INTERVAL:PT60S}
   # Phase 16 production hardening.
   # production=true enables secret validation, HSTS, and prod-only CORS rules. It must be set in
   # every real deployment; it is false locally and in tests.

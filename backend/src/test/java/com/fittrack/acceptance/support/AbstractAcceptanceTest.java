@@ -60,6 +60,22 @@ public abstract class AbstractAcceptanceTest {
         // Neutral model names so assertions never depend on production model identifiers.
         registry.add("app.ai-vision-model", () -> "fake-vision-model");
         registry.add("app.ai-text-model", () -> "fake-text-model");
+
+        // Every distinct @TestPropertySource set produces a separate cached context, and every cached
+        // context lives until the JVM exits. Hikari's defaults make that fatal: minimumIdle equals
+        // maximumPoolSize, so each idle context pins all ten connections open for the whole run. With
+        // ~20 contexts that is 200 connections demanded of a server allowing 100, and the suite fails
+        // with "too many clients already" in whichever class happens to start a context next - an error
+        // that points at the database rather than at the suite's connection budget.
+        //
+        // minimumIdle=0 with a short idle timeout lets a context that is not currently running tests
+        // give its connections back, so steady-state usage tracks the handful of contexts actually in
+        // use instead of accumulating. Five is the ceiling rather than a smaller number because
+        // concurrency tests deliberately drive several threads through the database at once.
+        registry.add("spring.datasource.hikari.maximum-pool-size", () -> "5");
+        registry.add("spring.datasource.hikari.minimum-idle", () -> "0");
+        // Hikari rejects an idleTimeout below 10s.
+        registry.add("spring.datasource.hikari.idle-timeout", () -> "10000");
     }
 
     private static Path storageDirectory() {
