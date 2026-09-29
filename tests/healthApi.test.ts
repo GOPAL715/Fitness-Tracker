@@ -2,7 +2,9 @@ import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import {
   listHealthDevices, addHealthDevice, syncHealthDevice, deleteHealthDevice,
   healthErrorMessage, syncStateLabel, DISCONNECT_RETENTION_NOTICE,
+  permissionStateNotice, permissionStateLabel, isClientReportedPermission,
 } from "../src/lib/api/healthApi";
+import { HEALTH_PROVIDERS } from "../src/lib/healthProviders";
 import { ALLOWED_WINDOW_DAYS, DEFAULT_WINDOW_DAYS } from "../src/lib/api/coachApi";
 import { ApiError, setAuthTokens } from "../src/lib/api/apiClient";
 
@@ -161,5 +163,70 @@ describe("health constants", () => {
   it("keeps the three supported windows", () => {
     expect([...ALLOWED_WINDOW_DAYS]).toEqual([7, 30, 90]);
     expect(DEFAULT_WINDOW_DAYS).toBe(7);
+  });
+});
+
+describe("Phase 11 Health Connect permission states", () => {
+  /**
+   * The server cannot verify Health Connect permissions - they are granted on the handset and only
+   * the native app can observe them. So permission_required and permission_revoked are claims the
+   * device makes about itself. These tests pin the distinction the UI depends on: they must be
+   * described as reported, and they must never be presented as a server-verified fact.
+   */
+
+  it("marks exactly the two permission states as client-reported", () => {
+    expect(isClientReportedPermission("permission_required")).toBe(true);
+    expect(isClientReportedPermission("permission_revoked")).toBe(true);
+    // Server-observable states must not be conflated with client claims.
+    expect(isClientReportedPermission("connected")).toBe(false);
+    expect(isClientReportedPermission("syncing")).toBe(false);
+    expect(isClientReportedPermission("sync_failed")).toBe(false);
+    expect(isClientReportedPermission("disconnected")).toBe(false);
+    expect(isClientReportedPermission(null)).toBe(false);
+  });
+
+  it("phrases every permission message as something the app reports", () => {
+    for (const state of ["permission_required", "permission_revoked", "connected"]) {
+      const message = permissionStateNotice(state);
+      expect(message).toBeTruthy();
+      expect(message!.toLowerCase()).toContain("the android app reports");
+    }
+  });
+
+  it("never presents a client claim as something FitTrack verified", () => {
+    // A message implying verification would be the actual failure, so assert it is absent.
+    for (const state of ["permission_required", "permission_revoked"]) {
+      const message = permissionStateNotice(state)!.toLowerCase();
+      expect(message).not.toContain("we verified");
+      expect(message).not.toContain("fittrack has verified");
+      expect(message).not.toContain("permission has been confirmed");
+    }
+  });
+
+  it("tells the user their existing data survives a revoked permission", () => {
+    expect(permissionStateNotice("permission_revoked")).toContain("unchanged");
+  });
+
+  it("shows nothing at all when a device reports no permission state", () => {
+    // A web-reachable provider has no Health Connect permissions, so inventing a state would lie.
+    expect(permissionStateNotice(null)).toBeNull();
+    expect(permissionStateNotice(undefined)).toBeNull();
+    expect(permissionStateNotice("something-else")).toBeNull();
+    expect(permissionStateLabel(null)).toBeNull();
+    expect(permissionStateLabel("something-else")).toBeNull();
+  });
+
+  it("labels each reportable state distinctly", () => {
+    expect(permissionStateLabel("permission_required")).toBe("Permission needed");
+    expect(permissionStateLabel("permission_revoked")).toBe("Permission revoked");
+    expect(permissionStateLabel("connected")).toBe("Access granted");
+  });
+
+  it("keeps the native-only Health Connect boundary honest in the provider catalogue", () => {
+    const healthConnect = HEALTH_PROVIDERS.find((p) => p.id === "health-connect");
+    expect(healthConnect).toBeDefined();
+    expect(healthConnect!.status).toBe("requires-native-app");
+    expect(healthConnect!.canSyncNow).toBe(false);
+    expect(healthConnect!.boundary.toLowerCase()).toContain("android");
   });
 });

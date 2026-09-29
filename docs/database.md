@@ -1,4 +1,4 @@
-# FitTrack AI — Database
+# FitTrack AI â€” Database
 
 24 tables in the `public` schema. Row level security is enabled on every one of
 them, with 90 policies in total. The Supabase security advisor reports zero
@@ -107,7 +107,7 @@ users but have no write policy, so they are read-only from the client. A single
 `FOR SELECT TO authenticated USING (true)` policy is correct here because the
 data is intentionally public to signed-in users.
 
-**`anon` holds no privileges** on any table — `REVOKE ALL` is applied
+**`anon` holds no privileges** on any table â€” `REVOKE ALL` is applied
 everywhere, so a signed-out request can neither read nor write health data.
 
 ## Storage
@@ -187,3 +187,45 @@ summed or averaged.
 **Retention on disconnect.** Deleting a `health_devices` row does not delete imported metrics. The
 foreign key is `ON DELETE SET NULL`, so the pointer is dropped and the history is kept. `source` and
 `provider_record_id` remain, so provenance is still readable.
+## Phase 11 additions (V11)
+
+### `app_users.timezone`
+
+The user's IANA zone, added because Phase 1-10 stored none. The only pre-existing `timezone` column
+belongs to a reminder and is not the user's, so a local calendar day could not be recovered from
+stored data - the gap `V7__calendar_session_date.sql` already documents.
+
+Nullable, and **left NULL for every existing user**. No default is invented: `UTC` is a real zone
+many users genuinely live in, so seeding it would be indistinguishable from a real answer and would
+silently mis-date health data for everyone else. The first successful ingest persists the zone the
+client sends; before that no health record can be dated. Values are validated against
+`java.time.ZoneId` before they are ever written.
+
+Applied to **health calendar dates only**. Phase 1-10 date semantics are unchanged by this phase.
+
+### `health_connect_records`
+
+A source-record ledger: one row per inbound Health Connect record, holding the value in its native
+unit plus the timestamps needed to re-derive which days it touched.
+
+It exists because Health Connect reports a **deletion as a record id only** - no value, no
+timestamps. Without retained source records, reconciliation would be impossible and the only options
+would be to leave a stale aggregate or invent a destruction rule. Aggregates are therefore always
+recomputed from this ledger rather than incremented.
+
+Uniqueness is `(user_id, device_id, record_id)`: a record id is unique per Health Connect store, and
+one person may have several Android devices.
+
+This is an ingest working set, **not a second read model**. `daily_metrics` and `body_metrics`
+remain the only read path, and the Phase 10 canonical views are untouched.
+
+### `health_devices.client_changes_token` and `permission_status`
+
+`client_changes_token` holds the Android client's own opaque Health Connect resume handle. It is
+kept **separate from `sync_cursor`**, which is the server's date watermark for the server-pull
+provider path. The two have different owners, semantics and lifetimes; conflating them would corrupt
+the pull path and let a client steer the server's cursor.
+
+`permission_status` is a **device-reported UX signal**. The server cannot verify Android Health
+Connect permissions, so nothing in the authorization path reads it and it can neither grant nor deny
+access. No raw permission strings, tokens, or credentials are stored.

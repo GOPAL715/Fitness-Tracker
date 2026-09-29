@@ -23,9 +23,19 @@ import java.util.Set;
  */
 public final class HealthProviders {
 
+    /**
+     * Google Health Connect.
+     *
+     * <p>Android-native. There is no server endpoint FitTrack could call, so this value labels a
+     * connection that a separate Android bridge pushes records into via
+     * {@code POST /api/v1/health/devices/{id}/records}. It is already ranked first by
+     * {@code health_source_priority} in V10, so a device measurement outranks a manual entry.
+     */
+    public static final String HEALTH_CONNECT = "health-connect";
+
     /** Integrations the backend can attribute data to. */
     public static final Set<String> SUPPORTED = Set.of(
-            "health-connect",
+            HEALTH_CONNECT,
             "fitbit",
             "garmin",
             "apple-health",

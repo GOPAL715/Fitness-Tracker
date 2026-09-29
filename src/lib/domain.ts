@@ -130,6 +130,15 @@ export type HealthDevice = {
   last_error: string | null;
   last_sync_at: string | null;
   awaiting_first_sync: boolean;
+
+  /**
+   * Phase 11: the permission state an Android Health Connect bridge reported about itself.
+   *
+   * This is a DEVICE-REPORTED claim, not a server-verified fact. Health Connect permissions are
+   * granted on the handset, so the backend has no way to observe them and only records what the
+   * bridge says. It never gates access to any data.
+   */
+  permission_status: string | null;
 };
 
 export type CoachNotification = {

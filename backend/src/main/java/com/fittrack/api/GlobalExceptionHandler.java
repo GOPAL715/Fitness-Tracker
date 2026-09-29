@@ -112,6 +112,21 @@ public class GlobalExceptionHandler {
                 "A parameter has an unsupported type"));
     }
 
+    /**
+     * A health record batch that carried no usable IANA timezone.
+     *
+     * <p>Given its own handler so the response carries a stable, actionable {@code timezone_required}
+     * code instead of the generic {@code request_failed}. A bridge can act on that code directly
+     * (send the device's zone, or call the timezone endpoint) without parsing English, and the
+     * distinction deserves a dedicated type because the cause is never a malformed request - it is a
+     * missing calendar, which is the one thing this endpoint must never guess at.
+     */
+    @ExceptionHandler(com.fittrack.health.TimezoneRequiredException.class)
+    ResponseEntity<?> timezoneRequired(com.fittrack.health.TimezoneRequiredException e) {
+        return ResponseEntity.status(400)
+                .body(body(400, "Bad Request", "timezone_required", e.getMessage()));
+    }
+
     @ExceptionHandler(org.springframework.web.server.ResponseStatusException.class)
     ResponseEntity<?> status(org.springframework.web.server.ResponseStatusException e) {
         int code = e.getStatusCode().value();

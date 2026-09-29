@@ -41,9 +41,10 @@ class BackupRestoreAcceptanceTest extends AbstractAcceptanceTest {
         // A gap would mean a migration never ran, so the chain must be contiguous. Phase 8 adds V8
         // for the nutrition indexes and the sargable food-name lookup, and V9 for the seeded
     // USDA SR Legacy food catalog. Phase 10 adds V10 for source-aware health storage: the
-    // device_id columns, the manual-only uniqueness indexes, and the canonical views.
+    // device_id columns, the manual-only uniqueness indexes, and the canonical views. Phase 11 adds V11:
+        // the user timezone, the Health Connect source-record ledger, and the Android client state columns.
         assertThat(applied).extracting(row -> String.valueOf(row.get("version")))
-        .containsExactly("1", "2", "3", "4", "5", "6", "7", "8", "9", "10");
+        .containsExactly("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11");
     }
 
     /**

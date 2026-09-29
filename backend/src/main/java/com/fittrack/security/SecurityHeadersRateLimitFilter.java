@@ -29,6 +29,7 @@ public class SecurityHeadersRateLimitFilter extends OncePerRequestFilter {
     private final int apiLimit, apiWindowSeconds;
     private final int aiLimit, aiWindowSeconds;
     private final int coachLimit, coachWindowSeconds;
+    private final int healthLimit, healthWindowSeconds;
 
     public SecurityHeadersRateLimitFilter(RateLimitService limiter,
             @Value("${app.production:false}") boolean production,
@@ -39,7 +40,9 @@ public class SecurityHeadersRateLimitFilter extends OncePerRequestFilter {
             @Value("${app.rate-limit.ai-requests:20}") int aiLimit,
             @Value("${app.rate-limit.ai-window-seconds:60}") int aiWindow,
             @Value("${app.rate-limit.coach-requests:20}") int coachLimit,
-            @Value("${app.rate-limit.coach-window-seconds:60}") int coachWindow) {
+            @Value("${app.rate-limit.coach-window-seconds:60}") int coachWindow,
+            @Value("${app.rate-limit.health-requests:60}") int healthLimit,
+            @Value("${app.rate-limit.health-window-seconds:60}") int healthWindow) {
         this.limiter = limiter;
         this.production = production;
         this.authLimit = authLimit;
@@ -50,6 +53,8 @@ public class SecurityHeadersRateLimitFilter extends OncePerRequestFilter {
         this.aiWindowSeconds = aiWindow;
         this.coachLimit = coachLimit;
         this.coachWindowSeconds = coachWindow;
+        this.healthLimit = healthLimit;
+        this.healthWindowSeconds = healthWindow;
     }
 
     @Override
@@ -94,6 +99,17 @@ public class SecurityHeadersRateLimitFilter extends OncePerRequestFilter {
         if (authenticated && path.startsWith("/api/v1/coach/")) {
             return limiter.hit("coach", authentication.getName(), coachLimit,
                     Duration.ofSeconds(coachWindowSeconds), false);
+        }
+
+        // Phase 11: health ingestion is a write path carrying batches, so it gets its own bucket
+        // rather than sharing the general API allowance. Keyed by the authenticated user, so a caller
+        // cannot dodge it by claiming another identity, and not per device - one user with several
+        // Android devices is one client, and per-device keying would multiply the real budget by the
+        // number of devices a user registers. The bucket bounds request volume only; the per-request
+        // record and body-size ceilings are enforced separately in the ingest path.
+        if (authenticated && path.startsWith("/api/v1/health/")) {
+            return limiter.hit("health", authentication.getName(), healthLimit,
+                    Duration.ofSeconds(healthWindowSeconds), false);
         }
 
         // AI and scanner traffic is expensive; it gets its own tighter bucket keyed by user.

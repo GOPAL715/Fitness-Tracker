@@ -104,7 +104,7 @@ export const HEALTH_PROVIDERS: HealthProvider[] = [
     label: "Android Health Connect",
     status: "requires-native-app",
     boundary:
-      "Health Connect is an Android-native API. It needs an Android app with the Health Connect SDK, so it cannot be connected from this browser app. A native shell would implement this interface identically to Apple Health.",
+      "Health Connect is an Android-native, on-device API, so it cannot be connected from this browser app. A separate Android app reads Health Connect and pushes the data to FitTrack. The server accepts steps, active calories, weight and body fat from that app, and it cannot be reached any other way.",
     canSyncNow: false,
     normalise: (payload) =>
       normaliseWith("health-connect", payload, {

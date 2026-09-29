@@ -31,7 +31,7 @@ import { apiData } from "../lib/api/dataAdapter";
 import { HEALTH_PROVIDERS, statusLabel, statusTone } from "../lib/healthProviders";
 import {
   syncHealthDevice, deleteHealthDevice, healthErrorMessage,
-  DISCONNECT_RETENTION_NOTICE, syncStateLabel,
+  DISCONNECT_RETENTION_NOTICE, syncStateLabel, permissionStateNotice, permissionStateLabel,
   type HealthDevice as HealthDeviceResponse,
 } from "../lib/api/healthApi";
 
@@ -149,7 +149,7 @@ export default function ProfileView({ profile, devices, notifications, onRefresh
     setSaved(false);
     try {
       // The adapter reports failure through `error`; the catch is the safety net for anything else,
-      // so the button can never be left stuck on "Saving…" either way.
+      // so the button can never be left stuck on "SavingÃ¢â‚¬Â¦" either way.
       const { error } = await apiData.from("fitness_profile").update(formToPayload(form)).eq("id", profile.id);
       if (error) {
         setSaveError("Your changes could not be saved. Please try again.");
@@ -324,7 +324,7 @@ export default function ProfileView({ profile, devices, notifications, onRefresh
 
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <button className="btn" onClick={saveProfile} disabled={saving}>
-              <Save size={16} /> {saving ? "Saving…" : "Save changes"}
+              <Save size={16} /> {saving ? "SavingÃ¢â‚¬Â¦" : "Save changes"}
             </button>
             {saved && (
               <span style={{ display: "inline-flex", alignItems: "center", gap: 6, color: "#4ade80", fontSize: 13, fontWeight: 600 }}>
@@ -381,6 +381,25 @@ export default function ProfileView({ profile, devices, notifications, onRefresh
                   {d.last_error && (
                     <p className="stat-meta" role="status">
                       Last sync could not complete ({d.last_error.replace(/_/g, " ")}).
+                    </p>
+                  )}
+                  {/* Device-reported permission state (D10). Phrased as what the app reports,
+                      because the server cannot verify Android Health Connect permissions itself. */}
+                  {permissionStateLabel(d.permission_status) && (
+                    <p className="stat-meta" role="status">
+                      <span
+                        className="badge"
+                        style={{
+                          background:
+                            d.permission_status === "permission_revoked"
+                              ? "rgba(248,113,113,0.16)"
+                              : "rgba(251,191,36,0.16)",
+                          color: d.permission_status === "permission_revoked" ? "#f87171" : "#fbbf24",
+                        }}
+                      >
+                        {permissionStateLabel(d.permission_status)}
+                      </span>{" "}
+                      {permissionStateNotice(d.permission_status)}
                     </p>
                   )}
                 </div>

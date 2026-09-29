@@ -54,6 +54,19 @@ app:
   cors:
     # Explicit origins only. A wildcard is never valid here because credentials are enabled.
     allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173,http://localhost:3000}
+    health-connect:
+      # D7. The initial sync window, in local days. Bounds how far back ingestion will accept, so a
+      # bridge cannot make the server retain unbounded history and the aggregation window stays the
+      # one the product decided on.
+      window-days: ${HEALTH_CONNECT_WINDOW_DAYS:30}
+  # D8. FitTrack's own application safety limits, NOT Google quota claims. Google publishes no
+  # documented Health Connect quota these would correspond to, and none is implied here.
+  #   max-body-bytes  rejects an oversized upload at the container, before the body is buffered, so
+  #                   an oversized request never becomes unbounded server memory.
+  #   max-records     bounds one batch; enforced in HealthConnectIngestService with a 413 response.
+  health-connect-limits:
+    max-body-bytes: ${HEALTH_CONNECT_MAX_BODY_BYTES:1048576}
+    max-records: ${HEALTH_CONNECT_MAX_RECORDS:500}
   rate-limit:
     # Transport-level abuse protection, separate from the AI quotas above.
     auth-requests: ${RATE_LIMIT_AUTH_REQUESTS:10}
@@ -67,6 +80,10 @@ app:
     # provider consumption. The two are different layers, not conflicting values.
     coach-requests: ${RATE_LIMIT_COACH_REQUESTS:20}
     coach-window-seconds: ${RATE_LIMIT_COACH_WINDOW:60}
+    # Phase 11 health ingestion. Its own bucket because it is a batch write path, and keyed by user
+    # rather than by device: one user with several Android devices is still one client.
+    health-requests: ${RATE_LIMIT_HEALTH_REQUESTS:60}
+    health-window-seconds: ${RATE_LIMIT_HEALTH_WINDOW:60}
     # When true the limiter uses Redis for shared state across instances. With Redis configured but
     # unreachable, authentication limits fail closed and general API limits fail open.
     redis-enabled: ${RATE_LIMIT_REDIS_ENABLED:false}

@@ -134,3 +134,94 @@ the UI states it in the same words, because claiming a deletion that did not hap
 than silence.
 
 No provider token is revoked on disconnect, because none is stored.
+## Phase 11: Health Connect ingestion contract
+
+The server half of the Health Connect path is implemented. The Android app that consumes it is a
+**separate repository** and does not exist yet.
+
+```
+Android app  ->  Health Connect APIs (on-device)  ->  POST /api/v1/health/devices/{id}/records
+                                                            |
+                                                            v
+                                  validate -> normalise -> ledger -> aggregate -> canonical views
+```
+
+### Endpoints
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `POST` | `/api/v1/health/devices/{id}/records` | Ingest a bounded batch of source records. |
+| `GET`  | `/api/v1/health/timezone` | Read the caller's stored IANA zone and whether one is set. |
+| `POST` | `/api/v1/health/timezone` | Set the caller's IANA zone. Validated against `ZoneId`. |
+
+`POST /devices/{id}/sync` is unchanged and remains the **server-pull** contract. The two routes are
+deliberately separate: one has the server calling a cloud provider, the other has a device pushing
+to us. They have different auth shapes and two different, unrelated "cursor" concepts.
+
+### Request shape
+
+```jsonc
+{
+  "timezone": "Asia/Kolkata",        // required, IANA, validated, never defaulted
+  "records": [
+    {
+      "record_id": "<Health Connect metadata.id>",
+      "record_type": "steps",         // steps | active_calories | weight | body_fat
+      "start_time": "2026-05-05T18:00:00Z",
+      "end_time":   "2026-05-05T20:00:00Z",
+      "value": 600,
+      "unit": "count"                 // count | kcal | kg | percent, must match the type
+    }
+  ],
+  "deleted_record_ids": ["..."],     // record ids the source reports as deleted
+  "changes_token": "<opaque>",       // the client's own Health Connect handle
+  "permission_status": "connected"   // client-reported UX state only
+}
+```
+
+Deliberately absent: `user_id` (ownership comes from the JWT), `provider` (the device's registered
+provider is authoritative), and every credential field. Health Connect needs no server-held secret,
+so there is no OAuth exchange, no token table, and no client secret.
+
+### Platform semantics this contract is built on
+
+Verified against Google's Health Connect documentation:
+
+- `StepsRecord` and `ActiveCaloriesBurnedRecord` are **interval** records. Their value is the total
+  over `[startTime, endTime]`, and summing a period's records gives the period total. FitTrack
+  therefore **adds** them per day.
+- `WeightRecord` and `BodyFatRecord` are **instantaneous** measurements, aggregated only as
+  `WEIGHT_AVG/MAX/MIN` and never as a total. FitTrack therefore **selects** the latest reading per
+  day and never sums them.
+- A deletion is reported as a **record id only** - the entry carries no value and no timestamps. That
+  is why FitTrack retains a source ledger: without it a deletion could not be reconciled.
+- Timestamps are absolute instants. The local calendar day is derived on the server from the
+  caller's IANA zone, because the platform does not supply a user calendar.
+
+### Aggregation and reconciliation
+
+Source records are written to `health_connect_records` first, and daily aggregates are **always
+recomputed from that ledger**, never incremented. Increments would drift on correction and would be
+unrecoverable after a deletion. A day whose source records are all deleted has its derived row
+**removed**, not zeroed, so the canonical views fall through to whatever else exists (including a
+manual entry) rather than reporting a fabricated zero.
+
+An interval crossing local midnight is split by **duration overlap** across the days it touches, and
+the split always sums back to the original value. Proportional splitting is an approximation and is
+documented as such in `HealthConnectAggregator`; the alternatives lose data or overstate a day.
+
+### Limits and abuse protection
+
+| Control | Value | Notes |
+| --- | --- | --- |
+| Max records per batch | 500 | FitTrack's own limit, not a Google quota. Exceeded returns 413. |
+| Max request body | 1 MB | Enforced at the filter, before the body is buffered. |
+| Rate limit | 60 requests/min | Reuses the Phase 16 `RateLimitService`, keyed by authenticated user. |
+| Accepted history | 30 days | Bounds retention so a bridge cannot make the server keep everything. |
+
+### Permission states are UX only
+
+`permission_required` and `permission_revoked` are **client claims**. The server structurally cannot
+verify Android Health Connect permissions, so nothing in the authentication or authorization path
+reads this state, and it can neither grant nor deny access. The web UI labels these as what the app
+reports, and presents no way to connect Health Connect from the browser.

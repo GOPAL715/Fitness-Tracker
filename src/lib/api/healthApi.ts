@@ -20,7 +20,35 @@ export type HealthDevice = {
   last_error: string | null;
   last_sync_at: string | null;
   awaiting_first_sync: boolean;
+  /**
+   * Phase 11: the permission state the Android bridge reported about itself.
+   *
+   * This is a DEVICE-REPORTED claim, not a server-verified fact. The backend cannot observe
+   * Health Connect permissions, which are granted on the handset, so the UI must present it as
+   * the bridge's own report. It never gates access to anything.
+   */
+  permission_status: HealthPermissionStatus | null;
 };
+
+/** The states a bridge may report, and which of them the server can actually establish. */
+export type HealthPermissionStatus =
+  | "connected"
+  | "disconnected"
+  | "syncing"
+  | "sync_failed"
+  | "permission_required"
+  | "permission_revoked";
+
+/**
+ * True for the two states only the client can know.
+ *
+ * FitTrack has no way to verify them, so any message about them has to be phrased as a report
+ * rather than as a fact. Presenting a client claim as a server-verified state would be the real
+ * failure here.
+ */
+export function isClientReportedPermission(status: string | null | undefined): boolean {
+  return status === "permission_required" || status === "permission_revoked";
+}
 
 export type HealthSyncResult = {
   status: string;
@@ -110,5 +138,41 @@ export function syncStateLabel(device: {
  *
  * The server keeps imported history, so the UI must not imply that disconnecting erases it.
  */
+/**
+ * A short description of the permission state the Android bridge reported about itself (D10).
+ *
+ * <p>Returning `null` means there is nothing to say: a device from a web-reachable provider has no
+ * Health Connect permissions to report, so the UI shows nothing rather than inventing a state.
+ *
+ * <p>Every message for the two client-reported states is phrased as something the device *says*,
+ * never as a fact FitTrack established. The backend cannot observe Health Connect permissions, so
+ * wording these as verified would misrepresent what the server actually knows.
+ */
+export function permissionStateNotice(status: string | null | undefined): string | null {
+  switch (status) {
+    case "permission_required":
+      return "The Android app reports that Health Connect permission is needed before it can read your data. Open the app and grant access, then it will sync.";
+    case "permission_revoked":
+      return "The Android app reports that Health Connect permission was revoked. Your previously imported data is unchanged. Reopen the app to grant access again.";
+    case "connected":
+      return "The Android app reports that Health Connect access is granted.";
+    default:
+      return null;
+  }
+}
+
+/** A short badge label for a reported permission state, or null when there is nothing to report. */
+export function permissionStateLabel(status: string | null | undefined): string | null {
+  switch (status) {
+    case "permission_required":
+      return "Permission needed";
+    case "permission_revoked":
+      return "Permission revoked";
+    case "connected":
+      return "Access granted";
+    default:
+      return null;
+  }
+}
 export const DISCONNECT_RETENTION_NOTICE =
   "Disconnecting stops future syncing. Previously imported health data remains in FitTrack.";
