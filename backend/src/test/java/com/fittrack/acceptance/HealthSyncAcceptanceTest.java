@@ -230,8 +230,37 @@ class HealthSyncAcceptanceTest extends AbstractAcceptanceTest {
 
         MvcResult result = sync(user, id, SYNC_DAY.toString());
         assertStatus(result, 502);
-        String body = result.getResponse().getContentAsString();
-        assertThat(body).doesNotContain(FakeHealthProvider.SECRET).doesNotContain("503");
+
+        // The upstream 503 is reported as OUR 502, and each field is checked individually. An
+        // earlier version scanned the whole serialized body for "503", which also matched a random
+        // request_id (e.g. ...-63503a4300c9) and failed for reasons unrelated to error handling.
+        // request_id is an opaque random UUID, so it is validated for shape, never for content.
+        JsonNode body = json(result);
+        assertThat(body.path("status").asInt())
+                .as("the application status is our 502, not the provider's 503").isEqualTo(502);
+        assertThat(body.path("code").asText())
+                .as("a stable machine-readable category").isEqualTo("request_failed");
+        assertThat(body.path("message").asText())
+                .as("our own wording, not the provider's").isEqualTo("Health provider unavailable");
+
+        // The provider's own status and message are not echoed anywhere in the envelope.
+        assertThat(body.path("error").asText()).doesNotContain("503");
+        assertThat(body.path("code").asText()).doesNotContain("503");
+        assertThat(body.path("message").asText()).doesNotContain("503");
+        // And no envelope field reports the upstream status as the application's own.
+        assertThat(body.path("status").asInt()).isNotEqualTo(503);
+
+        // The provider's credential is never echoed. SECRET is a fixed literal, so scanning the
+        // body for it is exact rather than incidental.
+        assertThat(result.getResponse().getContentAsString()).doesNotContain(FakeHealthProvider.SECRET);
+
+        // The correlation id is present and well-formed. It is random per request, so it is
+        // asserted for shape only - pinning or content-matching it would reintroduce the flake.
+        String requestId = body.path("request_id").asText();
+        assertThat(requestId).as("a correlation id is present").isNotBlank();
+        assertThat(UUID.fromString(requestId).toString())
+                .as("request_id is a well-formed UUID").isEqualTo(requestId);
+
         assertThat(jdbc.queryForObject("select last_error from health_devices where id=?", String.class, id))
                 .isEqualTo("unavailable");
     }
