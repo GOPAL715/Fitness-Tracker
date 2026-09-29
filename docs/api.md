@@ -47,6 +47,77 @@ Credential records are validated by the auth service, including required values 
 length. Scanner file validation checks declared MIME type, byte signature, and the 8 MiB limit; it does not
 fully decode images.
 
+## Notification settings and push semantics
+
+The notification settings centre is a screen, not a new capability. It reads the four existing push
+endpoints and adds no new ones.
+
+### Three independent facts
+
+The screen deliberately never merges these into a single "notifications are on" claim, because each
+answers a different question and only one of them is about the user's device:
+
+| Fact | Source | What it does not mean |
+|---|---|---|
+| Browser support | `Notification`, `PushManager`, service worker in the client | that permission is granted |
+| Permission | `Notification.permission` in the browser | that a subscription exists |
+| Server configuration | `GET /api/v1/push/config` | that this device is subscribed |
+| This device's subscription | the browser's own `PushManager` | that other devices are subscribed |
+
+A deployment with push configured can still have no subscribers; a granted permission can still have
+no subscription. The screen shows each separately so a user is never told "you're all set" when only
+one of the preconditions holds.
+
+### Permission semantics
+
+- **Not yet asked** (`default`) — the enable button is offered and requests permission from the click.
+- **Allowed** (`granted`) — permission is reused, never re-requested.
+- **Blocked** (`denied`) — **no enable button is offered and no prompt is ever raised again.** Only the
+  browser's site settings can undo this, and repeated prompting is treated as untrustworthy. The
+  screen says so plainly instead of presenting a control that cannot succeed.
+- **Insecure context** — the Push API is unavailable outside HTTPS. `localhost` counts as secure for
+  development. This is reported as its own condition, not folded into "not supported".
+- **Unsupported browser** — the API is absent entirely; nothing is offered.
+
+Permission is only ever requested from an explicit user gesture. Nothing on this screen prompts on load.
+
+### Enable and disable sequencing
+
+Enable reports success **only after the server has accepted the subscription**. If the browser
+subscribes and the backend then rejects it, the newly-created browser subscription is removed again,
+because a registration the server does not hold is a dead record that silently swallows every future
+send. If that cleanup also fails, the screen reports the partial state rather than claiming a clean
+result. A pre-existing subscription is never torn down by a failed re-registration.
+
+Disable asks the server to drop the row **first**, then unsubscribes locally. The reverse order would
+destroy the only copy of the endpoint needed to identify the row. If the delete fails, the browser is
+left subscribed and the screen says the subscription is **still active** — it is, because the server
+can still deliver to it. If the delete succeeds but the local unsubscribe fails, the screen reports
+"Removed from FitTrack. Browser subscription cleanup could not be completed." rather than implying
+everything is clean.
+
+### Multi-device behaviour
+
+Push is per browser registration, not per account. Turning notifications off affects **this device
+only**; devices registered separately keep receiving reminders. The screen says so explicitly.
+
+The API cannot prove which stored row belongs to which device, so devices are reported as a count
+("1 other device") and are never named, labelled or fingerprinted.
+
+### Endpoint non-disclosure
+
+A push endpoint contains a per-installation secret path. The server returns it because it needs it for
+delivery, but **no endpoint, hostname, or fragment of one is ever rendered in the UI** — the user has
+no functional need for it. The client's `listPushDevices` strips the field entirely rather than
+masking it, because a partial endpoint is still a secret fragment.
+
+### Test notification
+
+> Test notification intentionally deferred because the existing delivery architecture does not provide
+> a safe device-scoped test path. The only send path fans out to every subscription a user owns and
+> records to the real delivery ledger, so a test send would either pollute the user's reminder history
+> or require a new delivery path outside this phase's scope.
+
 ## Reminder delivery history
 
 ```

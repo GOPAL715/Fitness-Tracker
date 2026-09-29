@@ -17,6 +17,7 @@ import {
   PlugZap,
   UserCog,
   Sparkles,
+  Settings,
 } from "lucide-react";
 import {
  GOALS,
@@ -42,6 +43,13 @@ type Props = {
   devices: HealthDevice[];
   notifications: CoachNotification[];
   onRefresh: () => void;
+  /**
+   * Phase 18: routes to the full notification settings centre.
+   *
+   * <p>Optional so existing consumers keep rendering unchanged; when absent the summary card omits
+   * the link rather than offering a dead button.
+   */
+  onOpenNotificationSettings?: () => void;
 };
 
 const kindIcon = {
@@ -111,13 +119,15 @@ export function formToPayload(form: ProfileForm): Record<string, string | number
   return payload;
 }
 
-export default function ProfileView({ profile, devices, notifications, onRefresh }: Props) {
+export default function ProfileView({ profile, devices, notifications, onRefresh, onOpenNotificationSettings }: Props) {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [syncing, setSyncing] = useState<string | null>(null);
 const [pushState, setPushState] = useState<SupportState>("default");
 const [pushBusy, setPushBusy] = useState(false);
+/** Phase 18: the outcome of the last push action, in plain words, success or failure. */
+const [pushNotice, setPushNotice] = useState<string | null>(null);
   const { session } = useAuth();
   const [coachError, setCoachError] = useState<string | null>(null);
 
@@ -153,7 +163,7 @@ const [pushBusy, setPushBusy] = useState(false);
     setSaved(false);
     try {
       // The adapter reports failure through `error`; the catch is the safety net for anything else,
-      // so the button can never be left stuck on "SavingÃ¢â‚¬Â¦" either way.
+      // so the button can never be left stuck on "Saving…" either way.
       const { error } = await apiData.from("fitness_profile").update(formToPayload(form)).eq("id", profile.id);
       if (error) {
         setSaveError("Your changes could not be saved. Please try again.");
@@ -244,10 +254,16 @@ const [pushBusy, setPushBusy] = useState(false);
   /** The only place permission is ever requested, and only because the user pressed the button. */
   async function togglePush() {
     setPushBusy(true);
+    setPushNotice(null);
     try {
-      setPushState(pushState === "subscribed" ? await disablePush() : await enablePush());
+      // Phase 18: both flows return a result object rather than a bare state, so a rejected request
+      // is reported as rejected instead of being written into the UI as if it had worked.
+      const outcome = pushState === "subscribed" ? await disablePush() : await enablePush();
+      setPushNotice(outcome.message);
+      // Re-read rather than assume: success is only believed once the server and browser confirm it.
+      setPushState(await pushSupport());
     } catch {
-      setPushState(pushState);
+      setPushNotice("Could not reach FitTrack, so nothing was changed.");
     } finally {
       setPushBusy(false);
     }
@@ -350,7 +366,7 @@ const [pushBusy, setPushBusy] = useState(false);
 
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <button className="btn" onClick={saveProfile} disabled={saving}>
-              <Save size={16} /> {saving ? "SavingÃ¢â‚¬Â¦" : "Save changes"}
+              <Save size={16} /> {saving ? "Saving…" : "Save changes"}
             </button>
             {saved && (
               <span style={{ display: "inline-flex", alignItems: "center", gap: 6, color: "#4ade80", fontSize: 13, fontWeight: 600 }}>
@@ -361,8 +377,11 @@ const [pushBusy, setPushBusy] = useState(false);
         </div>
       </div>
 
-      {/* Reminder notifications. Permission is requested only when this button is pressed: a prompt
-          the user did not ask for is the fastest way to have notifications blocked permanently. */}
+      {/* Reminder notifications: a summary plus a route to the full settings centre. Permission is
+          requested only when a button is pressed: a prompt the user did not ask for is the fastest
+          way to have notifications blocked permanently. The detailed view owns the diagnosis, so
+          this card deliberately does not restate server or permission state and the two screens
+          cannot disagree about what is wrong. */}
       <div className="card">
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
           <Bell size={18} color="#4ade80" />
@@ -371,17 +390,34 @@ const [pushBusy, setPushBusy] = useState(false);
         <p style={{ fontSize: 13, color: "#94a3b8", margin: "0 0 14px", lineHeight: 1.55 }}>
           {pushExplainText(pushState)}
         </p>
-        {pushState !== "unsupported" && pushState !== "insecure" && pushState !== "disabled" && (
-          <button
-            className="btn btn-secondary"
-            onClick={togglePush}
-            disabled={pushBusy}
-            style={{ display: "inline-flex", alignItems: "center", gap: 8 }}
-          >
-            <Bell size={15} />
-            {pushState === "subscribed" ? "Turn off on this device" : "Enable reminders"}
-          </button>
+        {pushNotice && (
+          <p role="status" style={{ fontSize: 13, color: "#94a3b8", margin: "0 0 12px" }}>
+            {pushNotice}
+          </p>
         )}
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {pushState !== "unsupported" && pushState !== "insecure" && pushState !== "disabled" && (
+            <button
+              className="btn btn-secondary"
+              onClick={togglePush}
+              disabled={pushBusy}
+              style={{ display: "inline-flex", alignItems: "center", gap: 8 }}
+            >
+              <Bell size={15} />
+              {pushState === "subscribed" ? "Turn off on this device" : "Enable reminders"}
+            </button>
+          )}
+          {onOpenNotificationSettings && (
+            <button
+              className="btn btn-secondary"
+              onClick={onOpenNotificationSettings}
+              style={{ display: "inline-flex", alignItems: "center", gap: 8 }}
+            >
+              <Settings size={15} />
+              Notification settings
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Connected devices */}

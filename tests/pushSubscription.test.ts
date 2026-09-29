@@ -88,7 +88,9 @@ describe("push permission flow", () => {
     const result = await enablePush();
 
     expect(Notification.requestPermission).toHaveBeenCalledTimes(1);
-    expect(result).toBe("subscribed");
+    // Phase 18: enablePush now returns a result object, so success is asserted as ok rather than as
+    // the old bare "subscribed" state. The behaviour under test is unchanged.
+    expect(result.ok).toBe(true);
     expect(subscribeCalls).toBe(1);
     expect(posted).toHaveLength(1);
     expect(posted[0].endpoint).toBe("https://fcm.googleapis.com/fcm/send/abc");
@@ -99,7 +101,8 @@ describe("push permission flow", () => {
     granted = "denied";
     const result = await enablePush();
 
-    expect(result).toBe("denied");
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.reason).toMatch(/denied/);
     expect(subscribeCalls).toBe(0);
     expect(posted).toHaveLength(0);
   });
@@ -110,7 +113,7 @@ describe("push permission flow", () => {
 
     const result = await enablePush();
 
-    expect(result).toBe("subscribed");
+    expect(result.ok).toBe(true);
     expect(subscribeCalls).toBe(0);
     expect(registered.pushManager.subscribe).not.toHaveBeenCalled();
     expect(posted[0].endpoint).toBe("https://fcm.googleapis.com/fcm/send/existing");
@@ -129,7 +132,9 @@ describe("push permission flow", () => {
     permission = "granted";
     configResponse = { enabled: false, publicKey: "" };
 
-    expect(await enablePush()).toBe("disabled");
+    const result = await enablePush();
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.reason).toBe("server-disabled");
     expect(subscribeCalls).toBe(0);
   });
 
@@ -139,7 +144,8 @@ describe("push permission flow", () => {
 
     const result = await disablePush();
 
-    expect(result).toBe("unsubscribed");
+    expect(result.ok).toBe(true);
+    expect(result.serverRemoved).toBe(true);
     expect(existingSubscription.unsubscribe).toHaveBeenCalled();
     expect(deleted).toEqual(["https://fcm.googleapis.com/fcm/send/abc"]);
   });

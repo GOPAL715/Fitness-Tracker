@@ -16,6 +16,7 @@ import GoalsView from "./views/GoalsView";
 import CoachView from "./views/CoachView";
 import CalendarView from "./views/CalendarView";
 import ProfileView from "./views/ProfileView";
+import NotificationSettingsView from "./views/NotificationSettingsView";
 import ReminderDetailView from "./views/ReminderDetailView";
 import RemindersView from "./views/RemindersView";
 import ReminderFormModal from "./views/ReminderFormModal";
@@ -57,6 +58,11 @@ export default function App() {
   const [reminderId, setReminderId] = useState<string | null>(() => reminderIdFromLocation());
   const [editingReminder, setEditingReminder] = useState<Reminder | null>(null);
 
+  // Phase 18: the notification settings centre is a sub-view of the profile tab. It is not URL
+  // driven, deliberately: only the Phase 15 reminder deep link owns the address bar, so a
+  // notification screen cannot become a second route to reason about.
+  const [showNotificationSettings, setShowNotificationSettings] = useState(false);
+
   useEffect(() => {
     const sync = () => setReminderId(reminderIdFromLocation());
     window.addEventListener("focus", sync);
@@ -93,6 +99,9 @@ export default function App() {
 
   function selectTab(next: Tab) {
     if (reminderId) leaveReminder();
+    // Leaving the profile tab discards the notification sub-view, so coming back to Profile lands on
+    // the profile itself rather than a settings screen the user navigated away from.
+    if (next !== "profile") setShowNotificationSettings(false);
     setTab(next);
     setMenuOpen(false);
   }
@@ -212,13 +221,22 @@ export default function App() {
 
       {tab === "calendar" && <CalendarView />}
 
-      {tab === "profile" && (
+      {/* Phase 18: the notification settings centre is a sub-view of Profile rather than a new tab.
+          It is a focused screen reached from the profile summary, and giving it a tab would add a
+          top-level destination for something that is a setting rather than a daily surface. Keeping
+          it local also leaves the shared Tab union and the navigation tests untouched. */}
+      {tab === "profile" && !showNotificationSettings && (
         <ProfileView
           profile={app.profile}
           devices={app.devices}
           notifications={app.notifications}
           onRefresh={app.reload}
+          onOpenNotificationSettings={() => setShowNotificationSettings(true)}
         />
+      )}
+
+      {tab === "profile" && showNotificationSettings && (
+        <NotificationSettingsView onBack={() => setShowNotificationSettings(false)} />
       )}
     </AppShell>
   );

@@ -7,6 +7,10 @@ browser automation, no VAPID credentials, no HTTPS origin and no deployable targ
 this document describes a procedure **a human must perform against a real deployment**. Nothing here
 has been verified end to end, and no result should be recorded until someone has actually run it.
 
+**Phase 18 added the notification settings centre and has the same limitation:** the UI states and
+flows below are covered by automated tests against a stubbed browser and API, but no real browser has
+been driven through them. Section 9 is the procedure for doing so by hand.
+
 What *has* been verified deterministically is listed in
 [What is already covered](#7-what-is-already-covered-automated).
 
@@ -271,3 +275,36 @@ so only the cold-load case depends on the host configuration above.
    - **PASS** if the existing window focuses and shows the reminder.
 3. Open `/reminders/{some-uuid-they-do-not-own}` while signed in.
    - **PASS** if the not-found state appears, with no reminder data disclosed.
+
+## 11. Manual verification of the notification settings centre (Phase 18)
+
+**Not yet performed.** This is the procedure a human must follow against a real deployment; no result
+should be recorded until someone has actually run it. The automated tests cover the logic against a
+stubbed browser and API, but they cannot prove that a real browser grants permission, that a real push
+service accepts a registration, or that a notification is actually displayed.
+
+| # | Step | Expected result |
+|---|---|---|
+| 1 | Open Profile, then **Notification settings** | Screen loads with no permission prompt. |
+| 2 | Inspect the initial state | Browser support, permission, server configuration and device status are shown as four separate facts, not one combined claim. |
+| 3 | Confirm nothing prompts on load | No browser permission dialog appears without a click. |
+| 4 | Press **Enable notifications on this device** | A permission prompt appears exactly once. |
+| 5 | Grant permission | The screen reports success **only after** the server accepts the subscription. |
+| 6 | Inspect the database | One row in `push_subscriptions` for this user. |
+| 7 | Reload the page | State persists and still reads as subscribed. |
+| 8 | Block notifications for the site in the browser, then reload | Permission reads as blocked, **no enable button is offered**, and no prompt is raised. |
+| 9 | Re-allow in browser settings, then press Enable | Subscription is restored without needing a page reload first. |
+| 10 | Press **Turn off on this device** | The row is removed and the screen reports the subscription is off. |
+| 11 | Register a second browser, then disable on the first | Only the first browser's row is removed; the second still receives reminders. |
+| 12 | Inspect the screen source | No push endpoint, hostname, or fragment of one appears anywhere. |
+| 13 | Trigger a reminder while subscribed | The notification displays and tapping it opens `/reminders/{uuid}`. |
+| 14 | Inspect backend logs | Subscription ids and hosts only; no endpoint path, key, or token. |
+
+### Known behaviours that are correct, not defects
+
+- **A configured server does not mean a subscribed device.** They are separate rows on the screen.
+- **Permission can be granted with no subscription**, and vice versa. Both are shown independently.
+- **Disabling is per device.** There is no account-wide switch, by design.
+- **A blocked permission cannot be cleared by the app.** Only the browser can do it, and the screen says so.
+- **No "send a test notification" button exists.** See the deferral note in
+  [api.md](api.md#notification-settings-and-push-semantics).
