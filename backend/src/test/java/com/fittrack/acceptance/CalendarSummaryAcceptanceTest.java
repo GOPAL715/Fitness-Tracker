@@ -103,9 +103,12 @@ class CalendarSummaryAcceptanceTest extends AbstractAcceptanceTest {
         // A missing bound is rejected rather than defaulting to an unbounded query.
         assertStatus(getAs(s, "/api/v1/calendar/summary?to=2026-03-07"), 400);
         assertStatus(getAs(s, "/api/v1/calendar/summary?from=2026-03-01"), 400);
-        // The documented maximum is a 366-day span, so 366 days is accepted and 367 is not.
-        assertStatus(summary(s, "2025-01-01", "2026-01-02"), 200);
-        assertStructuredError(summary(s, "2025-01-01", "2026-01-03"), 400, "Bad Request");
+        // Phase 21: the calendar and the analytics endpoints now share ONE inclusive-range
+        // contract (AnalyticsRange), where 366 is the documented maximum. This assertion previously
+        // encoded a second, looser rule - a 367-day span was accepted here while /analytics rejected
+        // the identical window - which is precisely the contradiction Phase 21 removed.
+        assertStatus(summary(s, "2025-01-01", "2026-01-01"), 200);
+        assertStructuredError(summary(s, "2025-01-01", "2026-01-02"), 400, "Bad Request");
         assertStatus(summary(s, "2026-03-01", "2026-03-01"), 200);
     }
 

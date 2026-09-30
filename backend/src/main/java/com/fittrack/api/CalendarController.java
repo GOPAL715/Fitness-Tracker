@@ -40,10 +40,10 @@ public class CalendarController {
                                    @RequestParam("to") @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
                                    @AuthenticationPrincipal String userId) {
         if (userId == null || userId.isBlank()) throw new IllegalArgumentException("Authenticated user is required");
-        if (from.isAfter(to)) throw new IllegalArgumentException("from must not be after to");
-        if (from.plusDays(MAX_RANGE_DAYS).isBefore(to)) {
-            throw new IllegalArgumentException("range must not exceed " + MAX_RANGE_DAYS + " days");
-        }
+        // The one shared inclusive-range contract. This used to compare from.plusDays(366).isBefore(to),
+        // which accepted one day more than the analytics endpoints and let the two disagree about the
+        // same window; AnalyticsRange is now the single rule for both.
+        com.fittrack.analytics.AnalyticsRange.validate(from, to);
         // One parameter set for every query below, so the owner is the authenticated user in each of
         // them and there is no way to read another account's history.
         return new CalendarSummary(from, to, days(from, to, userId), sessions(from, to, userId),
