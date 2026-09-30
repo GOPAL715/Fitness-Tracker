@@ -37,13 +37,29 @@ app:
   ai-key: ${OPENAI_API_KEY:}
   ai-vision-model: ${AI_VISION_MODEL:gpt-4o-mini}
   ai-text-model: ${AI_TEXT_MODEL:gpt-4o-mini}
+  # Phase 22: model identifiers this deployment may select. Startup fails if either configured
+  # model is absent from the list, so a typo stops the boot instead of becoming a billed 502.
+  # Extend this list - not the code - when the provider gains a model you intend to use.
+  ai-supported-models: ${AI_SUPPORTED_MODELS:gpt-4o-mini}
   # Phase 9 Coach: a bounded interactive budget, separate from the scanner's.
   # 20s is an interactive request budget; the scanner keeps the longer provider read timeout.
   ai-coach-timeout-ms: ${AI_COACH_TIMEOUT_MS:20000}
   ai-limits:
     requests-per-minute: ${AI_REQUESTS_PER_MINUTE:10}
     requests-per-day: ${AI_REQUESTS_PER_DAY:100}
-    tokens-per-day: ${AI_TOKENS_PER_DAY:0}
+    # Phase 22: shipped as 0, which AiUsageService reads as "unlimited" and
+    # ProductionConfigValidator reads as "must be set" - so a deployment that did not opt in got
+    # either an uncapped token budget outside production or a refused startup inside it. 100000
+    # is the figure this documentation already specified as the production ceiling. The
+    # validator still refuses <= 0; this only removes the need to set it. Set 0 to restore the
+    # previous "unlimited" behaviour.
+    tokens-per-day: ${AI_TOKENS_PER_DAY:100000}
+    # Phase 22: pricing is DEPLOYMENT-SUPPLIED and defaults to 0. estimated_cost is an
+    # APPLICATION-SIDE ESTIMATE from these two numbers, never provider billing. This repository
+    # holds no price list for any model, so no default is asserted - inventing one would put a
+    # fabricated figure in an accounting column. Operators set both from the provider's current
+    # published rates. With both at 0 the arithmetic is skipped and estimated_cost stays null,
+    # while tokens are still recorded.
     pricing:
       input-per-million: ${AI_INPUT_PRICE_PER_MILLION:0}
       output-per-million: ${AI_OUTPUT_PRICE_PER_MILLION:0}

@@ -2,6 +2,9 @@ package com.fittrack.coach;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.jdbc.core.JdbcTemplate;
+import com.fittrack.analytics.AnalyticsTimezone;
+import com.fittrack.analytics.AnalyticsTimezoneResolver;
+import com.fittrack.analytics.WorkoutAnalytics;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
@@ -39,10 +42,15 @@ public class CoachContextService {
 
     private final JdbcTemplate jdbc;
     private final ObjectMapper mapper;
+    private final AnalyticsTimezoneResolver timezones;
+    private final WorkoutAnalytics workouts;
 
-    public CoachContextService(JdbcTemplate jdbc, ObjectMapper mapper) {
+    public CoachContextService(JdbcTemplate jdbc, ObjectMapper mapper,
+                               AnalyticsTimezoneResolver timezones, WorkoutAnalytics workouts) {
         this.jdbc = jdbc;
         this.mapper = mapper;
+        this.timezones = timezones;
+        this.workouts = workouts;
     }
 
     /**
@@ -52,7 +60,18 @@ public class CoachContextService {
      * @param windowDays 7, 30 or 90
      */
     public String buildContextJson(UUID userId, int windowDays) {
-        LocalDate today = LocalDate.now(ZoneOffset.UTC);
+        /*
+         * Phase 22: "today" is resolved in the user's own zone, through the same component the
+         * analytics endpoints use.
+         *
+         * This previously read LocalDate.now(ZoneOffset.UTC), so for anyone east or west of UTC the
+         * Coach's "last 7 days" ended on a different day than the dashboard they had just looked
+         * at, and the two surfaces could disagree about the same window. The fallback is unchanged:
+         * a user with no stored zone is answered in UTC, and the resolver reports which happened so
+         * that stays visible rather than becoming a silent assumption.
+         */
+        AnalyticsTimezone.Resolved zone = timezones.resolve(userId.toString());
+        LocalDate today = zone.today();
         LocalDate from = today.minusDays(windowDays - 1L);
         UUID p = userId;
 
@@ -125,18 +144,82 @@ public class CoachContextService {
                 + " WHERE user_id=? AND metric_date BETWEEN ? AND ?", p, from, to);
     }
 
+    /**
+     * Nutrition averages, now including fiber (Phase 22).
+     *
+     * <p>Fiber is read from the same {@code meals} rows as every other macro, so it is the average
+     * the user's own logged meals actually support. A meal written before fiber existed carries a
+     * null there; {@code sum}/{@code avg} skip nulls rather than treating the absence as a zero, so
+     * an old meal cannot drag the reported fibre down.
+     */
     private Map<String, Object> nutrition(UUID p, LocalDate from, LocalDate to) {
         return one("SELECT count(*) meals_logged, COALESCE(sum(calories),0) calories,"
                 + " COALESCE(avg(protein_g),0) avg_protein_g, COALESCE(avg(carbs_g),0) avg_carbs_g,"
-                + " COALESCE(avg(fat_g),0) avg_fat_g FROM meals"
+                + " COALESCE(avg(fat_g),0) avg_fat_g, COALESCE(avg(fiber_g),0) avg_fiber_g FROM meals"
                 + " WHERE user_id=? AND meal_date BETWEEN ? AND ?", p, from, to);
     }
 
+    /**
+     * Training activity over the window, using the Phase 21 canonical semantic (Phase 22).
+     *
+     * <p>This used to read only the legacy {@code workouts} table. Phase 21 established that a
+     * completed quick log and a completed structured session are BOTH training activity, and
+     * {@link WorkoutAnalytics} is the single tested definition of that. Reusing it here is what stops
+     * the Coach telling a user they completed no sessions while their own dashboard shows several.
+     *
+     * <p>Counts and minutes come from that service, so the two surfaces cannot disagree and the
+     * activity cannot be counted twice. Perceived effort is the one measure it does not expose, so a
+     * single narrow query reads it across both tables; it carries no counting semantics and cannot
+     * double-count anything.
+     */
     private Map<String, Object> workouts(UUID p, LocalDate from, LocalDate to) {
-        return one("SELECT count(*) sessions, count(*) FILTER (WHERE completed) completed_sessions,"
-                + " COALESCE(sum(duration_minutes) FILTER (WHERE completed),0) total_minutes,"
-                + " COALESCE(avg(perceived_effort) FILTER (WHERE completed),0) avg_effort FROM workouts"
-                + " WHERE user_id=? AND workout_date BETWEEN ? AND ?", p, from, to);
+        Map<String, Object> m = new LinkedHashMap<>();
+        long sessions = 0;
+        long minutes = 0;
+        for (WorkoutAnalytics.DailyWorkout day : workouts.dailyTotals(from, to, p.toString())) {
+            sessions += day.sessions();
+            minutes += day.minutes();
+        }
+        m.put("sessions", sessions);
+        // WorkoutAnalytics only returns completed rows, so the completed count IS the session count.
+        m.put("completed_sessions", sessions);
+        m.put("total_minutes", minutes);
+        m.put("avg_effort", averageEffort(p, from, to));
+        return m;
+    }
+
+    /**
+     * Mean perceived effort across both workout tables.
+     *
+     * <p>The only query in this class that is not an aggregate of {@link WorkoutAnalytics}, and it
+     * exists solely because the existing Coach contract reports average effort, which the shared
+     * service does not model. It contributes no counts, so it cannot affect the session totals above.
+     */
+    private BigDecimal averageEffort(UUID p, LocalDate from, LocalDate to) {
+        Map<String, Object> m = one(
+                "SELECT (SELECT COALESCE(sum(perceived_effort),0) FROM workouts"
+                        + " WHERE user_id=? AND workout_date BETWEEN ? AND ? AND completed"
+                        + " AND perceived_effort IS NOT NULL)"
+                        + " + (SELECT COALESCE(sum(perceived_effort),0) FROM workout_sessions"
+                        + " WHERE user_id=? AND session_date BETWEEN ? AND ? AND completed"
+                        + " AND perceived_effort IS NOT NULL) AS effort_sum,"
+                        + " (SELECT count(*) FROM workouts"
+                        + " WHERE user_id=? AND workout_date BETWEEN ? AND ? AND completed"
+                        + " AND perceived_effort IS NOT NULL)"
+                        + " + (SELECT count(*) FROM workout_sessions"
+                        + " WHERE user_id=? AND session_date BETWEEN ? AND ? AND completed"
+                        + " AND perceived_effort IS NOT NULL) AS effort_n",
+                p, from, to, p, from, to, p, from, to, p, from, to);
+        long n = num(m.get("effort_n"));
+        if (n == 0) return BigDecimal.ZERO;
+        // Pooled sum over pooled count, NOT an average of two averages. Averaging the averages
+        // would give a single logged session the same weight as a day of ten quick logs, and would
+        // silently report a different number whenever one table happened to be empty.
+        return decimal(m.get("effort_sum")).divide(BigDecimal.valueOf(n), 2, RoundingMode.HALF_UP);
+    }
+
+    private static BigDecimal decimal(Object value) {
+        return value == null ? BigDecimal.ZERO : new BigDecimal(String.valueOf(value));
     }
 
     /** Adherence as a ratio the model can reason about directly, rather than raw log rows. */

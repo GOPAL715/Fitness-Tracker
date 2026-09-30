@@ -35,27 +35,27 @@ public class AnalyticsController {
     private final com.fittrack.api.CalendarController calendar;
     private final WorkoutAnalytics workouts;
     private final TrendAnalytics trends;
+    private final AnalyticsTimezoneResolver timezones;
 
     public AnalyticsController(JdbcTemplate jdbc, com.fittrack.api.CalendarController calendar,
-                               WorkoutAnalytics workouts, TrendAnalytics trends) {
+                               WorkoutAnalytics workouts, TrendAnalytics trends,
+                               AnalyticsTimezoneResolver timezones) {
         this.jdbc = jdbc;
         this.calendar = calendar;
         this.workouts = workouts;
         this.trends = trends;
+        this.timezones = timezones;
     }
 
     /**
-     * The caller's stored zone, or the UTC fallback.
+     * Delegates to the shared resolver rather than repeating the column lookup.
      *
-     * <p>{@code app_users.timezone} and nothing else. The notification and reminder zones answer
-     * different questions and are never consulted here; see {@link AnalyticsTimezone}.
+     * <p>Phase 22 moved this into {@link AnalyticsTimezoneResolver} because the Coach needs the
+     * identical rule. The behaviour is unchanged - same column, same validator, same UTC fallback -
+     * so the Phase 21 analytics contract is untouched; only the location of the lookup moved.
      */
     private AnalyticsTimezone.Resolved zone(String u) {
-        List<Map<String, Object>> rows = jdbc.queryForList(
-                "SELECT timezone FROM app_users WHERE id=CAST(? AS uuid)", u);
-        String stored = rows.isEmpty() || rows.get(0).get("timezone") == null
-                ? null : String.valueOf(rows.get(0).get("timezone"));
-        return AnalyticsTimezone.resolve(stored);
+        return timezones.resolve(u);
     }
 
     private LocalDate[] range(LocalDate from, LocalDate to, int defaultDays, String u) {

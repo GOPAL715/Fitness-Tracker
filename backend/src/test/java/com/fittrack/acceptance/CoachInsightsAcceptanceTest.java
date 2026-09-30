@@ -247,14 +247,49 @@ class CoachInsightsAcceptanceTest extends AiAssertions {
             Object[] args = sql.contains("personal_records")
                     ? new Object[] {java.util.UUID.randomUUID()}
                     : new Object[] {java.util.UUID.randomUUID(), from, to};
-            String plan = String.join(" ", jdbc.queryForList(sql, args).stream()
-                    .map(Object::toString).toList());
+            String plan = explainRequiringIndex(sql, args);
             // A sequential scan is only a problem for these tables in a populated database; the
-            // assertion that matters is that the plan names an index rather than ignoring one.
+            // assertion that matters is that an index can serve the query rather than being ignored.
             assertThat(plan.toLowerCase())
                     .as("plan for %s should be index-driven", sql.substring(8, 40))
                     .contains("idx_");
         }
+    }
+
+    /**
+     * EXPLAINs {@code sql} with sequential scans disabled, then restores the setting.
+
+     * <p>Phase 22. This test asserts that each predicate is COVERED by an index that already exists.
+     * On the very small tables a shared test database holds, PostgreSQL quite correctly prefers a
+     * sequential scan, because looking the row up through an index would cost more. That says nothing
+     * about whether the index exists, so the original assertion measured how much data earlier tests
+     * happened to write - and adding tests was enough to flip it.
+
+     * <p>With sequential scans disabled the planner must use an index if one can serve the predicate, so
+     * a pass proves an index covers it and a failure means none does. That is a stronger and
+     * volume-independent statement of the same intent. The setting is session-scoped, applied and
+     * reverted on one connection, so no other test is affected.
+     */
+    private String explainRequiringIndex(String sql, Object[] args) {
+        return jdbc.execute((org.springframework.jdbc.core.ConnectionCallback<String>) connection -> {
+            try {
+                connection.createStatement().execute("SET enable_seqscan = off");
+                try (java.sql.PreparedStatement statement = connection.prepareStatement(sql)) {
+                    for (int i = 0; i < args.length; i++) statement.setObject(i + 1, args[i]);
+                    try (java.sql.ResultSet rs = statement.executeQuery()) {
+                        java.util.List<String> lines = new java.util.ArrayList<>();
+                        while (rs.next()) lines.add(rs.getString(1));
+                        return String.join(" ", lines);
+                    }
+                }
+            } finally {
+                try {
+                    connection.createStatement().execute("SET enable_seqscan = on");
+                } catch (java.sql.SQLException ignored) {
+                    // A pooled connection returns to the pool either way; nothing to recover.
+                }
+            }
+        });
     }
 
     @Test

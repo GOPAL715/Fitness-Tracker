@@ -60,6 +60,10 @@ public abstract class AbstractAcceptanceTest {
         // Neutral model names so assertions never depend on production model identifiers.
         registry.add("app.ai-vision-model", () -> "fake-vision-model");
         registry.add("app.ai-text-model", () -> "fake-text-model");
+        // Phase 22: AiModelAllowlist fails startup on an unsupported model name, so the suite has to
+        // permit the same stand-ins it configures. There is no test-only bypass in the component:
+        // a name is either in this configured list or the context fails to start.
+        registry.add("app.ai-supported-models", () -> "fake-vision-model,fake-text-model");
 
         // Every distinct @TestPropertySource set produces a separate cached context, and every cached
         // context lives until the JVM exits. Hikari's defaults make that fatal: minimumIdle equals
