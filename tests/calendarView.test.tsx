@@ -100,19 +100,48 @@ describe("month grid", () => {
     expect(document.querySelectorAll(".cal-cell")).toHaveLength(daysInMonth);
   });
 
+  /*
+   * The clock is pinned to a mid-month date so this test is identical on the 30th, the 1st, in a leap
+   * year, or on any ordinary day.
+   *
+   * It used to compute tomorrow and guard with `tomorrow.getDate() <= lastDay`, where lastDay was
+   * the number of days in *tomorrow's own* month. That guard is almost always true, so on the last
+   * day of a month it looked for a date belonging to the next month inside the current month's grid
+   * and failed with "Unable to find a label". A real future cell is always asserted here instead of
+   * being skipped when the arithmetic happened to disagree with the calendar.
+   */
   it("marks today and never allows selecting a future day", async () => {
-    stubSummary();
-    render(<CalendarView />);
-    await waitFor(() => expect(calls).toHaveLength(1));
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.setSystemTime(new Date(2026, 2, 15)); // 15 March 2026, mid-month
+    try {
+      stubSummary();
+      render(<CalendarView />);
+      await waitFor(() => expect(calls).toHaveLength(1));
 
-    expect(screen.getByLabelText(todayISO()).className).toContain("cal-cell-today");
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    const lastDay = new Date(tomorrow.getFullYear(), tomorrow.getMonth() + 1, 0).getDate();
-    if (tomorrow.getDate() <= lastDay) {
-      const pad = (n: number) => String(n).padStart(2, "0");
-      const iso = `${tomorrow.getFullYear()}-${pad(tomorrow.getMonth() + 1)}-${pad(tomorrow.getDate())}`;
-      expect((screen.getByLabelText(iso) as HTMLButtonElement).disabled).toBe(true);
+      // Today is marked, and today is selectable.
+      const today = todayISO();
+      expect(today).toBe("2026-03-15");
+      const todayCell = screen.getByLabelText(today) as HTMLButtonElement;
+      expect(todayCell.className).toContain("cal-cell-today");
+      expect(todayCell.disabled).toBe(false);
+
+      // A specific future day exists in this grid and cannot be chosen.
+      const tomorrow = screen.getByLabelText("2026-03-16") as HTMLButtonElement;
+      expect(tomorrow.disabled).toBe(true);
+
+      // And the rule holds for the whole grid, not just the two days checked above: nothing after
+      // today is selectable, and everything before it is.
+      const cells = Array.from(document.querySelectorAll<HTMLButtonElement>(".cal-cell"));
+      expect(cells.length).toBeGreaterThan(20);
+      for (const cell of cells) {
+        const date = cell.getAttribute("aria-label") ?? "";
+        expect({ date, disabled: cell.disabled }).toEqual({
+          date,
+          disabled: date > today,
+        });
+      }
+    } finally {
+      vi.useRealTimers();
     }
   });
 });

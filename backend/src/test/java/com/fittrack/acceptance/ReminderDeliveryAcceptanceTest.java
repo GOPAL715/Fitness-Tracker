@@ -218,16 +218,34 @@ class ReminderDeliveryAcceptanceTest extends AbstractAcceptanceTest {
         assertStatus(reschedule(user, id), 200);
         // Backdate the occurrence so the reminder is genuinely due right now.
         jdbc.update("update reminders set next_occurrence_at=now()-interval '1 minute' where id=?", id);
-        assertThat(dueReminders()).as("an enabled reminder is due once scheduled").hasSize(1);
+        assertThat(dueReminders(user)).as("an enabled reminder is due once scheduled").hasSize(1);
 
         assertStatus(call(user, org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch("/api/v1/reminders/" + id)
                 .contentType(MediaType.APPLICATION_JSON).content("{\"enabled\":false}")), 200);
-        assertThat(dueReminders()).as("a disabled reminder is skipped").isEmpty();
+        assertThat(dueReminders(user)).as("a disabled reminder is skipped").isEmpty();
     }
 
-    private List<Map<String, Object>> dueReminders() {
-        return jdbc.queryForList("select id from reminders where enabled=true and next_occurrence_at is not null"
-                + " and next_occurrence_at<=now()");
+    /*
+     * Due reminders belonging to one account.
+     *
+     * <p>This mirrors the production query in ReminderDeliveryService.dueReminders, which is
+     * deliberately GLOBAL: the scheduler is a system-wide tick, so it selects every reminder due at
+     * that instant and resolves each row's own user_id afterwards. That design is correct and is not
+     * changed here.
+     *
+     * <p>What was wrong is the assertion, not the scheduler. This helper used to run the same global
+     * query and then assert the result had exactly one row, against a database shared by the whole
+     * test JVM where other classes leave enabled, backdated reminders behind. The count therefore
+     * depended on which tests had already run, and this test failed whenever it was not first.
+     *
+     * <p>Scoping the assertion to the account under test is what the test means to check - that
+     * *this* reminder becomes due and then stops being due - and it makes the result independent of
+     * execution order without weakening the property being verified.
+     */
+    private List<Map<String, Object>> dueReminders(Session user) {
+        return jdbc.queryForList("select id from reminders where user_id=CAST(? as uuid)"
+                        + " and enabled=true and next_occurrence_at is not null and next_occurrence_at<=now()",
+                user.id());
     }
 
     private Instant nextOccurrence(UUID id) {
