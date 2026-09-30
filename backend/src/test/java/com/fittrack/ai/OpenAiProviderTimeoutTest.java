@@ -88,17 +88,40 @@ class OpenAiProviderTimeoutTest {
             socket.bind(new InetSocketAddress("127.0.0.1", 0));
             pool.submit(() -> {
                 while (!socket.isClosed()) {
-                    try (Socket client = socket.accept()) {
-                        // Read the request head, bounded, before replying. An unbounded drain would
-                        // block waiting for bytes the client will never send, which is a hang rather
-                        // than a fast healthy response.
+                    Socket client;
+                    try {
+                        client = socket.accept();
+                    } catch (IOException e) {
+                        // The listening socket is unusable; there is nothing left to serve.
+                        return;
+                    }
+                    try {
+                        /*
+                         * Read the whole request before replying: the head, then the entire body.
+                         *
+                         * Phase 22. The previous version read into an 8 KiB buffer and then made one
+                         * extra read to consume the body. That is a guess, and it fails in both
+                         * directions depending on how the request is segmented. Spring streams the
+                         * JSON with Transfer-Encoding: chunked, so there is no Content-Length to
+                         * consult, and when that extra read had nothing left it blocked for the full
+                         * 2s socket timeout before the catch-all closed the socket without answering.
+                         * The caller then saw a dropped connection rather than a response, and the
+                         * test failed on a runner that segmented the request differently from the
+                         * developer machine.
+                         *
+                         * Consuming the body first makes the reply independent of segmentation, and it
+                         * matters for a second reason: closing a socket that still holds unread data
+                         * sends a TCP RST, which discards the response just written. Draining first
+                         * means close() sends FIN and the caller actually receives the answer.
+                         *
+                         * The 2s SO_TIMEOUT still bounds a client that stalls mid-request; a
+                         * well-formed one always sends a complete request.
+                         */
                         client.setSoTimeout(2_000);
                         InputStream in = client.getInputStream();
-                        byte[] scratch = new byte[8192];
-                        int first = in.read(scratch);
-                        // One extra short read is enough to consume the body of a small request; the
-                        // socket timeout bounds it if the client is still mid-write.
-                        if (first > 0 && first < scratch.length) in.read(scratch);
+                        String head = readHead(in);
+                        drainBody(in, head);
+
                         byte[] payload = body.getBytes(StandardCharsets.UTF_8);
                         OutputStream out = client.getOutputStream();
                         out.write(("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: "
@@ -106,10 +129,71 @@ class OpenAiProviderTimeoutTest {
                         out.write(payload);
                         out.flush();
                     } catch (IOException e) {
-                        return;
+                        // Swallowed so one bad connection cannot end the accept loop. The caller
+                        // still sees its own request fail, which is a legible test failure rather
+                        // than every later request hitting a silently dead server.
+                    } finally {
+                        closeQuietly(client);
                     }
                 }
             });
+        }
+
+        /** Reads bytes up to and including the blank line that ends the request head. */
+        private static String readHead(InputStream in) throws IOException {
+            StringBuilder head = new StringBuilder();
+            int crlf = 0;
+            int b;
+            while ((b = in.read()) >= 0) {
+                head.append((char) b);
+                crlf = (b == (crlf == 0 || crlf == 2 ? 13 : 10)) ? crlf + 1 : 0;
+                if (crlf == 4) break;
+            }
+            return head.toString();
+        }
+
+        /**
+         * Consumes the body so the socket can be closed cleanly.
+         *
+         * <p>Spring streams the request with Transfer-Encoding: chunked, so the body ends at the
+         * terminating zero-length chunk rather than at a Content-Length. Both forms are handled, and
+         * an absent framing header is treated as nothing to read rather than as an error.
+         */
+        private static void drainBody(InputStream in, String head) throws IOException {
+            String lower = head.toLowerCase(java.util.Locale.ROOT);
+            if (lower.contains("transfer-encoding:") && lower.contains("chunked")) {
+                String terminator = "0\r\n\r\n";
+                StringBuilder window = new StringBuilder();
+                int b;
+                while ((b = in.read()) >= 0) {
+                    window.append((char) b);
+                    if (window.length() > terminator.length()) window.deleteCharAt(0);
+                    if (window.toString().contentEquals(terminator)) return;
+                }
+                return;
+            }
+            int declared = contentLengthOf(head);
+            if (declared > 0) in.readNBytes(declared);
+        }
+
+        /** The declared body length from a request head, or 0 when it declares none. */
+        private static int contentLengthOf(String head) {
+            for (String line : head.split("\r\n")) {
+                if (line.regionMatches(true, 0, "Content-Length:", 0, "Content-Length:".length())) {
+                    try {
+                        return Math.max(0, Integer.parseInt(line.substring("Content-Length:".length()).trim()));
+                    } catch (NumberFormatException e) {
+                        return 0;
+                    }
+                }
+            }
+            return 0;
+        }
+
+        private static void closeQuietly(Socket socket) {
+            if (socket != null) {
+                try { socket.close(); } catch (IOException ignored) { }
+            }
         }
 
         String baseUrl() {
