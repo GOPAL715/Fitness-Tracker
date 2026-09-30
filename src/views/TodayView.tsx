@@ -32,6 +32,15 @@ import {
 import { ProgressRing, StatTile, EmptyState } from "../components/ui";
 import { todayNutrition, habitsCompletedToday } from "../lib/dailySummary";
 import { formatLongDate, todayISO, round } from "../lib/utils";
+import { getDashboardAnalytics } from "../lib/api/analyticsApi";
+import { useAnalyticsRequest } from "../features/analytics/useAnalyticsRequest";
+import {
+  AnalyticsError,
+  AnalyticsLoading,
+  AnalyticsPanel,
+  Measure,
+  TimezoneNotice,
+} from "../features/analytics/AnalyticsStates";
 
 type Props = {
   profile: Profile | null;
@@ -86,7 +95,28 @@ export default function TodayView({
   const load = computeTrainingLoad(workouts);
   const todayWorkouts = workouts.filter((w) => w.workout_date === todayISO());
   const firstName = profile?.display_name.split(" ")[0] ?? "there";
-  const nutrition = todayNutrition(meals);
+  /*
+   * Phase 21: the server owns the day's totals. `todayNutrition` used to sum the meals the app had
+   * already loaded, which meant the same figure was computed in two places and could disagree with
+   * the analytics API - and it had no fiber, because nothing local tracked it. The server sums the
+   * same `meals` rows and adds fiber, so the local sum is no longer used for these figures.
+   *
+   * The prop `meals` is still passed in and still drives the rest of the view; only the duplicated
+   * arithmetic moved.
+   */
+  const analytics = useAnalyticsRequest(() => getDashboardAnalytics(), "dashboard");
+  const serverNutrition = analytics.data?.nutrition ?? null;
+  // Until the server answers, fall back to the local sum rather than flashing zeros. It is a genuine
+  // value the user just logged, and it is replaced by the authoritative one as soon as it arrives.
+  const nutrition = serverNutrition
+    ? {
+        calories: serverNutrition.calories,
+        protein: serverNutrition.protein_g,
+        carbs: serverNutrition.carbs_g,
+        fat: serverNutrition.fat_g,
+        fiber: serverNutrition.fiber_g,
+      }
+    : { ...todayNutrition(meals), fiber: null as number | null };
   const habitsDone = habitsCompletedToday(habits, habitLogs);
 
   async function handleWater() {
@@ -343,6 +373,14 @@ export default function TodayView({
             <NutritionBar label="Protein" value={nutrition.protein} target={profile?.protein_target_g ?? 150} color="#38bdf8" />
             <NutritionBar label="Carbs" value={nutrition.carbs} target={Math.round((profile?.calorie_target ?? 2400) * 0.45 / 4)} color="#4ade80" />
             <NutritionBar label="Fat" value={nutrition.fat} target={Math.round((profile?.calorie_target ?? 2400) * 0.28 / 9)} color="#a78bfa" />
+            {/*
+              Fiber is new in Phase 21. It is only rendered once the server has answered, because
+              before that there is genuinely no fiber figure in the app: the local meal sum did not
+              carry one. Showing 0 g while loading would claim the user ate no fiber today.
+            */}
+            {serverNutrition && (
+              <NutritionBar label="Fiber" value={serverNutrition.fiber_g} target={30} color="#e2e8f0" />
+            )}
           </div>
         </div>
 
@@ -413,6 +451,72 @@ export default function TodayView({
           </div>
         )}
       </div>
+
+      {/*
+        Phase 21: the day's figures as the server computed them.
+
+        This block exists to be honest about provenance. Everything above it is derived from the
+        rows the browser happens to hold; these numbers come from the analytics API, which resolves
+        the day in the caller's timezone. Two consequences are visible on purpose:
+
+          * workout calories are shown as their own figure, never added to the activity estimate.
+            One is a per-session number the user typed, the other a whole-day device estimate, and
+            summing them would invent a third quantity that nobody measured.
+          * a null workout calorie total reads "Not recorded" rather than 0, because
+            `workout_sessions` has no calorie column and a zero would assert one.
+      */}
+      <AnalyticsPanel
+        title="Today from your analytics"
+        icon={<TrendingUp size={18} color="#38bdf8" />}
+      >
+        {analytics.loading && !analytics.data ? (
+          <AnalyticsLoading label="Loading today's analytics" />
+        ) : analytics.error && !analytics.data ? (
+          <AnalyticsError message={analytics.error} onRetry={analytics.reload} />
+        ) : analytics.data ? (
+          <>
+            <TimezoneNotice
+              timezone={analytics.data.timezone}
+              resolved={analytics.data.timezone_resolved}
+            />
+            <div className="grid-3" style={{ marginTop: 10 }}>
+              <div>
+                <div style={{ fontSize: 22, fontWeight: 800, color: "#f0f6fc" }}>
+                  <Measure value={analytics.data.activity.steps} format={(v) => v.toLocaleString()} />
+                </div>
+                <span className="stat-meta">steps</span>
+              </div>
+              <div>
+                <div style={{ fontSize: 22, fontWeight: 800, color: "#f0f6fc" }}>
+                  <Measure value={analytics.data.activity.calories_burned} format={(v) => v.toLocaleString()} />
+                </div>
+                <span className="stat-meta">activity calories (device estimate)</span>
+              </div>
+              <div>
+                <div style={{ fontSize: 22, fontWeight: 800, color: "#f0f6fc" }}>
+                  <Measure
+                    value={analytics.data.workout.calories}
+                    format={(v) => v.toLocaleString()}
+                    absent="Not recorded"
+                  />
+                </div>
+                <span className="stat-meta">session calories (typed)</span>
+              </div>
+            </div>
+            <p style={{ fontSize: 12, color: "#64748b", margin: "12px 0 0", lineHeight: 1.5 }}>
+              {analytics.data.workout.sessions} training{" "}
+              {analytics.data.workout.sessions === 1 ? "session" : "sessions"} today
+              {analytics.data.workout.logged_sessions > 0 && (
+                <> · {analytics.data.workout.logged_sessions} logged with exercise detail</>
+              )}
+              {analytics.data.workout.quick_logged > 0 && (
+                <> · {analytics.data.workout.quick_logged} quick logged</>
+              )}
+              . Activity and session calories are separate measures and are never added together.
+            </p>
+          </>
+        ) : null}
+      </AnalyticsPanel>
 
       {/* Heart metrics */}
       <div className="card">

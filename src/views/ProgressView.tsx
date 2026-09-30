@@ -16,7 +16,16 @@ import {
 import { apiData, type DailyMetric, type Workout, type BodyMetric, type PersonalRecord } from "../lib/api/dataAdapter";
 import type { Goal } from "../lib/types";
 import { BarChart, EmptyState, Modal, SectionHeader, ProgressRing } from "../components/ui";
-import { formatDate, round, todayISO } from "../lib/utils";
+import { formatDate, round, todayISO, dateOffset } from "../lib/utils";
+import { getTrendsAnalytics, type TrendBucket, type TrendPoint } from "../lib/api/analyticsApi";
+import { useAnalyticsRequest } from "../features/analytics/useAnalyticsRequest";
+import {
+  AnalyticsEmpty,
+  AnalyticsError,
+  AnalyticsLoading,
+  AnalyticsPanel,
+  TimezoneNotice,
+} from "../features/analytics/AnalyticsStates";
 import {
   weeklyVolumeSeries, muscleDistribution, underTrainedMuscles, rollingAverage,
   type SessionWithDetail,
@@ -37,6 +46,24 @@ type ChartKind = "readiness" | "sleep" | "steps" | "hrv";
 
 export default function ProgressView({ metrics, workouts, records, body, sessions, goals, onRefresh }: Props) {
   const [chartKind, setChartKind] = useState<ChartKind>("readiness");
+
+  /*
+   * Phase 21: the server-side trend series.
+   *
+   * The window is a 90-day lookback, which is the backend default and stays inside its 366-day
+   * bound. `dateOffset` walks local dates, so the window ends on the caller's own today rather than
+   * a UTC one, matching how the rest of this view derives its dates.
+   *
+   * The bucket is part of the request key, so switching it refetches; the hook then discards any
+   * response that arrives after a newer request, which is what stops a slow day-bucket reply from
+   * repainting a month-bucket chart.
+   */
+  const [bucket, setBucket] = useState<TrendBucket>("week");
+  const trendRange = { from: dateOffset(89), to: todayISO() };
+  const trends = useAnalyticsRequest(
+    () => getTrendsAnalytics({ from: trendRange.from, to: trendRange.to, bucket }),
+    `trends:${bucket}:${trendRange.from}:${trendRange.to}`
+  );
   const [openBody, setOpenBody] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -119,6 +146,16 @@ export default function ProgressView({ metrics, workouts, records, body, session
   const readinessValues = chrono.map((m) => m.readiness);
   const readinessAvg = readinessValues.length ? rollingAverage(readinessValues)[readinessValues.length - 1] : 0;
 
+  /*
+   * Maps a server bucket to a bar for the hand-rolled BarChart.
+   *
+   * A bucket with a null measure is omitted rather than drawn as zero. The server returns only
+   * buckets that hold data, but a bucket can still hold activity while having no nutrition row, and
+   * a zero-height bar labelled with a date would claim the user ate nothing on a day they simply
+   * did not log. The gap is left visible.
+   */
+  const trendBars = trendBarsFor(trends.data?.buckets ?? [], bucket);
+
   return (
     <div className="flex-col" style={{ animation: "fadeInUp 0.4s ease both" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12 }}>
@@ -167,6 +204,51 @@ export default function ProgressView({ metrics, workouts, records, body, session
           <span className="stat-meta">RPE across sessions</span>
         </div>
       </div>
+
+      {/* Server-side trends: day, week or month */}
+      <AnalyticsPanel
+        title="Trends"
+        icon={<TrendingUp size={18} color="#38bdf8" />}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12, marginBottom: 8 }}>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }} role="group" aria-label="Trend bucket">
+            {(["day", "week", "month"] as TrendBucket[]).map((b) => (
+              <button
+                key={b}
+                className={`nav-btn ${bucket === b ? "nav-btn-active" : ""}`}
+                style={{ padding: "6px 12px", fontSize: 13, textTransform: "capitalize" }}
+                aria-pressed={bucket === b}
+                onClick={() => setBucket(b)}
+              >
+                {b}
+              </button>
+            ))}
+          </div>
+          {trends.data && (
+            <TimezoneNotice timezone={trends.data.timezone} resolved={trends.data.timezone_resolved} />
+          )}
+        </div>
+
+        {trends.loading && !trends.data ? (
+          <AnalyticsLoading label={`Loading ${bucket} trends`} />
+        ) : trends.error && !trends.data ? (
+          <AnalyticsError message={trends.error} onRetry={trends.reload} />
+        ) : trendBars.length === 0 ? (
+          <AnalyticsEmpty
+            title={`No ${bucket} data yet`}
+            message="Once you have a few days of recorded activity, your trend series will appear here."
+          />
+        ) : (
+          <>
+            <BarChart data={trendBars} color="#38bdf8" unit=" steps" />
+            <p style={{ fontSize: 12, color: "#64748b", margin: "8px 0 0", lineHeight: 1.5 }}>
+              {trends.data?.buckets.length ?? 0} {bucket}
+              {(trends.data?.buckets.length ?? 0) === 1 ? "" : "s"} with recorded activity over the last 90
+              days. Buckets with no data are omitted rather than shown as zero.
+            </p>
+          </>
+        )}
+      </AnalyticsPanel>
 
       {/* Chart */}
       <div className="card">
@@ -555,6 +637,41 @@ function buildMonthlyReview(
 
   return reviews.slice(0, 4);
 }
-
-
-
+/**
+ * Server buckets to bars for the existing hand-rolled chart.
+ *
+ * Phase 21. No charting library is introduced: this maps the analytics response onto the same
+ * `{ label, value }` shape `BarChart` already accepts, so the series reuses the app's own
+ * component and styling.
+ *
+ * A bucket whose steps are null is skipped instead of drawn at zero. The server already omits
+ * buckets with no data at all, but a bucket can carry activity and no step count, and rendering that
+ * as a zero-height bar would state the user took no steps that day - a claim about a measurement
+ * that was never made. Leaving the bar out keeps the gap visible.
+ */
+/**
+ * Known limitation (Phase 21): only `steps` and `start` are read from each bucket.
+ *
+ * The server returns every measure it aggregated - activity, nutrition including fiber, and the
+ * workout split - but this panel charts steps alone. That is a deliberate scope limit rather than an
+ * oversight: a metric selector belongs in its own change, and reading a measure into a component that
+ * has no way to show it would only obscure the contract.
+ *
+ * The unused fields are cheap to carry. At the 90-day default a `day` bucket is at most 90 buckets of
+ * roughly 300 bytes each, about 28 KB uncompressed, and gzip cuts that to a few KB; `week` and `month`
+ * return at most 13 and 4 buckets. That is a small response for a dashboard, so nothing is trimmed
+ * from the payload and the backend is left unchanged.
+ */
+export function trendBarsFor(points: TrendPoint[], bucket: TrendBucket): { label: string; value: number }[] {
+  return points
+    .filter((p) => p.steps !== null && p.steps !== undefined)
+    .map((p) => ({
+      // A day bucket labels with the day number; a week or month needs the month, because a bare
+      // "12" repeated across weeks would be ambiguous.
+      label:
+        bucket === "day"
+          ? String(Number(p.start.slice(8, 10)))
+          : new Date(p.start + "T00:00:00").toLocaleDateString(undefined, { month: "short" }),
+      value: p.steps as number,
+    }));
+}

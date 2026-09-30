@@ -52,13 +52,20 @@ describe("body measurement save", () => {
     fireEvent.click(screen.getAllByRole("button", { name: /add measurement|log measurement/i })[0]);
     fireEvent.click(saveButton());
 
-    await waitFor(() => expect(calls).toHaveLength(1));
+    await waitFor(() => expect(calls.some((c) => c.url.includes("/body-metrics"))).toBe(true));
+    /*
+     * The save is addressed by which call it is, not by its position. Phase 21 added a trends fetch
+     * that fires on mount, so the analytics GET is now the first request the view makes; asserting on
+     * `calls[0]` would be asserting that nothing else loads first rather than that the save is a
+     * POST, which is what this test is actually about.
+     */
+    const save = calls.find((c) => c.url.includes("/body-metrics"))!;
     // A POST to the collection: the client has no row id, and the server upserts by day.
-    expect(calls[0].method).toBe("POST");
-    expect(calls[0].url).toContain("/body-metrics");
-    expect(calls[0].url).not.toMatch(/body-metrics\/.+/);
-    expect(calls[0].body.weight_lb).toBe(180);
-    expect(calls[0].body.metric_date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(save.method).toBe("POST");
+    expect(save.url).toContain("/body-metrics");
+    expect(save.url).not.toMatch(/body-metrics\/.+/);
+    expect(save.body.weight_lb).toBe(180);
+    expect(save.body.metric_date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     await waitFor(() => expect(onRefresh).toHaveBeenCalled());
   });
 
