@@ -175,4 +175,4 @@ export function permissionStateLabel(status: string | null | undefined): string 
   }
 }
 export const DISCONNECT_RETENTION_NOTICE =
-  "Disconnecting stops future syncing. Previously imported health data remains in FitTrack.";
+  "Disconnecting stops future syncing. Previously imported health data remains in AI FitTrack.";

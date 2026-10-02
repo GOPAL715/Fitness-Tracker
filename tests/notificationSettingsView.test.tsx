@@ -161,13 +161,13 @@ describe("notification settings screen", () => {
 
   it("surfaces a read failure rather than an empty, confident screen", async () => {
     mockSnapshot.mockResolvedValue(snapshot({
-      error: "Could not reach FitTrack to read the notification settings.",
+      error: "Could not reach AI FitTrack to read the notification settings.",
     }));
 
     render(<NotificationSettingsView />);
 
     await waitFor(() => expect(screen.getByRole("status")).toBeTruthy());
-    expect(screen.getByText(/Could not reach FitTrack/i)).toBeTruthy();
+    expect(screen.getByText(/Could not reach AI FitTrack/i)).toBeTruthy();
   });
 
   it("reports a successful enable", async () => {
@@ -183,7 +183,7 @@ describe("notification settings screen", () => {
     mockEnable.mockResolvedValue({
       ok: false,
       reason: "backend-rejected",
-      message: "FitTrack could not save this subscription, so nothing was changed. Please try again.",
+      message: "AI FitTrack could not save this subscription, so nothing was changed. Please try again.",
     });
 
     render(<NotificationSettingsView />);
@@ -199,7 +199,7 @@ describe("notification settings screen", () => {
       ok: true,
       serverRemoved: true,
       browserCleaned: false,
-      message: "Removed from FitTrack. Browser subscription cleanup could not be completed.",
+      message: "Removed from AI FitTrack. Browser subscription cleanup could not be completed.",
     });
 
     render(<NotificationSettingsView />);
@@ -214,7 +214,7 @@ describe("notification settings screen", () => {
       ok: false,
       serverRemoved: false,
       browserCleaned: false,
-      message: "FitTrack could not remove this subscription, so it is still active. Please try again.",
+      message: "AI FitTrack could not remove this subscription, so it is still active. Please try again.",
     });
 
     render(<NotificationSettingsView />);

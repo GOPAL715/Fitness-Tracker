@@ -84,7 +84,7 @@ export function AppShell({
             <Activity size={22} color="#38bdf8" />
           </div>
           <span className="brand-name">
-            FitTrack <span style={{ color: "#38bdf8" }}>AI</span>
+            AI <span style={{ color: "#38bdf8" }}>FitTrack</span>
           </span>
         </div>
 

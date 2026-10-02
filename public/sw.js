@@ -1,5 +1,5 @@
 /*
- * FitTrack AI service worker.
+ * AI FitTrack service worker.
  *
  * Strategy, deliberately conservative:
  * - App shell (HTML, JS, CSS, fonts, icons): stale-while-revalidate, so the app
@@ -55,7 +55,7 @@ self.addEventListener("message", (event) => {
 /**
  * The in-app destination for a tapped notification.
  *
- * FitTrack has a single URL-driven route, added in Phase 15: /reminders/{uuid}. The id is validated
+ * AI FitTrack has a single URL-driven route, added in Phase 15: /reminders/{uuid}. The id is validated
  * as a bare UUID and the path is *constructed* here, so a payload cannot influence the result beyond
  * supplying a well-formed id. Anything else - a missing id, a URL, a `javascript:` string, a
  * protocol-relative prefix, an extra path segment - yields the app root.
@@ -72,7 +72,7 @@ function safePath(reminderId) {
 }
 
 function readPushPayload(event) {
-  if (!event.data) return { title: "FitTrack", body: "You have a reminder", path: "/" };
+  if (!event.data) return { title: "AI FitTrack", body: "You have a reminder", path: "/" };
   let parsed = null;
   try {
     parsed = event.data.json();
@@ -81,13 +81,13 @@ function readPushPayload(event) {
   }
   if (!parsed || typeof parsed !== "object") {
     return {
-      title: "FitTrack",
+      title: "AI FitTrack",
       body: event.data.text ? String(event.data.text) : "You have a reminder",
       path: "/",
     };
   }
   return {
-    title: typeof parsed.title === "string" && parsed.title ? parsed.title : "FitTrack",
+    title: typeof parsed.title === "string" && parsed.title ? parsed.title : "AI FitTrack",
     body: typeof parsed.body === "string" ? parsed.body : "You have a reminder",
     path: safePath(parsed.reminderId),
   };

@@ -165,7 +165,7 @@ export default function FoodScannerModal({ foods, onClose, onSaved }: Props) {
         {stage === "choose" && (
           <div className="scanner-choose">
             <p style={{ fontSize: 14, color: "#94a3b8", margin: 0, lineHeight: 1.6 }}>
-              Photograph your meal and FitTrack will identify each food and estimate the portion. You can correct
+              Photograph your meal and AI FitTrack will identify each food and estimate the portion. You can correct
               anything before saving.
             </p>
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>

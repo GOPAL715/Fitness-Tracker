@@ -83,7 +83,7 @@ describe("health API routes", () => {
   it("disconnects through the device route and reports retention", async () => {
     stubFetch(200, {
       disconnected: true, imported_history_retained: true,
-      message: "Disconnecting stops future syncing. Previously imported health data remains in FitTrack.",
+      message: "Disconnecting stops future syncing. Previously imported health data remains in AI FitTrack.",
     });
     const result = await deleteHealthDevice("dev-1");
 
@@ -154,7 +154,7 @@ describe("error messages", () => {
 describe("disconnect retention", () => {
   it("states that history is kept, so the UI cannot imply deletion", () => {
     expect(DISCONNECT_RETENTION_NOTICE).toMatch(/stops future syncing/i);
-    expect(DISCONNECT_RETENTION_NOTICE).toMatch(/remains in FitTrack/i);
+    expect(DISCONNECT_RETENTION_NOTICE).toMatch(/remains in AI FitTrack/i);
     expect(DISCONNECT_RETENTION_NOTICE).not.toMatch(/deleted|will be removed/i);
   });
 });
@@ -193,7 +193,7 @@ describe("Phase 11 Health Connect permission states", () => {
     }
   });
 
-  it("never presents a client claim as something FitTrack verified", () => {
+  it("never presents a client claim as something AI FitTrack verified", () => {
     // A message implying verification would be the actual failure, so assert it is absent.
     for (const state of ["permission_required", "permission_revoked"]) {
       const message = permissionStateNotice(state)!.toLowerCase();

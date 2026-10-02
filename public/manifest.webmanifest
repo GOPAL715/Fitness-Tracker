@@ -1,6 +1,6 @@
 {
-  "name": "FitTrack AI — Fitness Platform",
-  "short_name": "FitTrack",
+  "name": "AI FitTrack — Fitness Platform",
+  "short_name": "AI FitTrack",
   "description": "Track workouts, nutrition, habits and recovery with explainable insights and AI coaching.",
   "start_url": "/",
   "scope": "/",

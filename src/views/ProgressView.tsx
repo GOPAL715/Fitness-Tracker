@@ -377,7 +377,7 @@ export default function ProgressView({ metrics, workouts, records, body, session
       <div className="card" style={{ background: "linear-gradient(135deg, rgba(14,165,233,0.08), rgba(15,23,42,0.4))" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
           <Sparkles size={18} color="#38bdf8" />
-          <span style={{ fontSize: 15, fontWeight: 700, color: "#f0f6fc" }}>FitTrack AI monthly review</span>
+          <span style={{ fontSize: 15, fontWeight: 700, color: "#f0f6fc" }}>AI FitTrack monthly review</span>
         </div>
         <div className="grid-2">
           <div className="flex-col" style={{ gap: 12 }}>

@@ -1,4 +1,4 @@
-﻿# FitTrack Food Catalog
+﻿# AI FitTrack Food Catalog
 
 The `foods` table is a **global, read-only catalog** of nutrition data. This
 document records exactly where every seeded value came from, how it was
@@ -81,9 +81,9 @@ asserts the id, unit and nbr of all seven on every run and aborts on mismatch.
 ## Category mapping
 
 All 28 SR Legacy categories are decided explicitly. Included categories map to
-one of twelve FitTrack categories.
+one of twelve AI FitTrack categories.
 
-| FDC id | FDC category | FitTrack | Decision |
+| FDC id | FDC category | AI FitTrack | Decision |
 | --- | --- | --- | --- |
 | 1 | Dairy and Egg Products | `DAIRY`, or `EGGS` when the name begins with "egg" | include |
 | 2 | Spices and Herbs | `SPICES` | include |

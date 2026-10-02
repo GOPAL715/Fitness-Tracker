@@ -87,7 +87,7 @@ export const HEALTH_PROVIDERS: HealthProvider[] = [
     label: "Apple Health",
     status: "requires-native-app",
     boundary:
-      "Apple Health has no web API. Reading it needs a native iOS app using HealthKit, so it cannot be connected from this browser app. If FitTrack is wrapped in a native shell later, that shell implements this interface and posts normalised days to the server.",
+      "Apple Health has no web API. Reading it needs a native iOS app using HealthKit, so it cannot be connected from this browser app. If AI FitTrack is wrapped in a native shell later, that shell implements this interface and posts normalised days to the server.",
     canSyncNow: false,
     normalise: (payload) =>
       normaliseWith("apple-health", payload, {
@@ -104,7 +104,7 @@ export const HEALTH_PROVIDERS: HealthProvider[] = [
     label: "Android Health Connect",
     status: "requires-native-app",
     boundary:
-      "Health Connect is an Android-native, on-device API, so it cannot be connected from this browser app. A separate Android app reads Health Connect and pushes the data to FitTrack. The server accepts steps, active calories, weight and body fat from that app, and it cannot be reached any other way.",
+      "Health Connect is an Android-native, on-device API, so it cannot be connected from this browser app. A separate Android app reads Health Connect and pushes the data to AI FitTrack. The server accepts steps, active calories, weight and body fat from that app, and it cannot be reached any other way.",
     canSyncNow: false,
     normalise: (payload) =>
       normaliseWith("health-connect", payload, {
@@ -155,7 +155,7 @@ export const HEALTH_PROVIDERS: HealthProvider[] = [
     label: "Manual entry",
     status: "manual",
     boundary:
-      "Entered by hand in FitTrack. Always available and always the fallback when no device is connected.",
+      "Entered by hand in AI FitTrack. Always available and always the fallback when no device is connected.",
     canSyncNow: true,
     normalise: (payload) =>
       normaliseWith("manual", payload, {

@@ -1,4 +1,4 @@
-# FitTrack Spring Boot architecture
+# AI FitTrack Spring Boot architecture
 
 ## Overview
 

@@ -63,7 +63,7 @@ export default function OnboardingScreen({ profile, onComplete }: Props) {
           </div>
           <span className="brand-name">Set up your profile</span>
         </div>
-        <p className="auth-sub">A few details so FitTrack can tailor your plan, targets and recommendations.</p>
+        <p className="auth-sub">A few details so AI FitTrack can tailor your plan, targets and recommendations.</p>
 
         <div className="auth-form">
           {error && <div className="form-error" role="alert"><span>{error}</span></div>}

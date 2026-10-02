@@ -117,7 +117,7 @@ describe("reminder detail view", () => {
     render(<ReminderDetailView id={ID} onBack={() => {}} />);
 
     await waitFor(() => expect(screen.getByRole("alert")).toBeTruthy());
-    expect(screen.getByText(/Back to FitTrack/i)).toBeTruthy();
+    expect(screen.getByText(/Back to AI FitTrack/i)).toBeTruthy();
   });
 
   it("returns to the application on request", async () => {
@@ -127,7 +127,7 @@ describe("reminder detail view", () => {
     render(<ReminderDetailView id={ID} onBack={() => { back += 1; }} />);
 
     await waitFor(() => expect(screen.getByText("Time to train")).toBeTruthy());
-    screen.getByText(/Back to FitTrack/i).click();
+    screen.getByText(/Back to AI FitTrack/i).click();
 
     expect(back).toBe(1);
   });

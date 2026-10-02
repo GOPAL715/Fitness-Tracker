@@ -1,4 +1,4 @@
-# FitTrack AI — Food Scanner
+# AI FitTrack — Food Scanner
 
 ## Purpose
 

@@ -45,11 +45,11 @@ function permissionLabel(permission: PushSnapshot["permission"]): string {
 function permissionDetail(permission: PushSnapshot["permission"]): string {
   switch (permission) {
     case "granted":
-      return "This browser allows FitTrack to show notifications.";
+      return "This browser allows AI FitTrack to show notifications.";
     case "denied":
-      return "Your browser is blocking notifications for this site. Only your browser's site settings can undo this - FitTrack cannot prompt for it again.";
+      return "Your browser is blocking notifications for this site. Only your browser's site settings can undo this - AI FitTrack cannot prompt for it again.";
     case "default":
-      return "FitTrack has not asked this browser for permission yet.";
+      return "AI FitTrack has not asked this browser for permission yet.";
     default:
       return "This browser does not provide the notification API.";
   }
@@ -77,7 +77,7 @@ function canEnable(snapshot: PushSnapshot): boolean {
 
 function blockedReason(snapshot: PushSnapshot): string {
   if (!snapshot.browserSupported) return "This browser cannot receive notifications.";
-  if (!snapshot.secureContext) return "Open FitTrack over HTTPS to enable notifications.";
+  if (!snapshot.secureContext) return "Open AI FitTrack over HTTPS to enable notifications.";
   if (snapshot.permission === "denied") return "Notifications are blocked for this site. Re-allow them in your browser's site settings.";
   if (!snapshot.serverConfigured) return "Notifications are not available on this server right now.";
   return "This device is already subscribed.";
@@ -120,7 +120,7 @@ export default function NotificationSettingsView({ onBack }: Props) {
     try {
       setResult(await enablePush());
     } catch {
-      setResult({ ok: false, reason: "network-error", message: "Could not reach FitTrack. Nothing was changed." });
+      setResult({ ok: false, reason: "network-error", message: "Could not reach AI FitTrack. Nothing was changed." });
     } finally {
       setBusy(null);
       await reload();
@@ -134,7 +134,7 @@ export default function NotificationSettingsView({ onBack }: Props) {
       setResult(await disablePush());
     } catch {
       setResult({ ok: false, serverRemoved: false, browserCleaned: false,
-        message: "Could not reach FitTrack, so this subscription may still be active." });
+        message: "Could not reach AI FitTrack, so this subscription may still be active." });
     } finally {
       setBusy(null);
       await reload();
@@ -146,7 +146,7 @@ export default function NotificationSettingsView({ onBack }: Props) {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12 }}>
         <SectionHeader
           title="Notification settings"
-          subtitle="What this browser can do, and what FitTrack has recorded for it"
+          subtitle="What this browser can do, and what AI FitTrack has recorded for it"
         />
         {onBack && (
           <button className="btn btn-secondary" onClick={onBack}>Back to profile</button>
@@ -231,8 +231,8 @@ function SnapshotBody({ snapshot, busy, result, onEnable, onDisable }: {
             value={snapshot.serverConfigured ? "Configured" : "Not configured"}
             good={snapshot.serverConfigured}
             detail={snapshot.serverConfigured
-              ? "This FitTrack deployment is set up to send push notifications."
-              : "This FitTrack deployment has push notifications switched off. This is a server setting, not something you can change."}
+              ? "This AI FitTrack deployment is set up to send push notifications."
+              : "This AI FitTrack deployment has push notifications switched off. This is a server setting, not something you can change."}
           />
         </dl>
       </div>

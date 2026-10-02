@@ -170,13 +170,13 @@ export async function enablePush(): Promise<EnableResult> {
   try {
     support = await pushSupport();
   } catch {
-    return { ok: false, reason: "network-error", message: "Could not reach FitTrack to check notification settings. Nothing was changed." };
+    return { ok: false, reason: "network-error", message: "Could not reach AI FitTrack to check notification settings. Nothing was changed." };
   }
   if (support === "unsupported") {
     return { ok: false, reason: "unsupported", message: "This browser cannot receive notifications." };
   }
   if (support === "insecure") {
-    return { ok: false, reason: "insecure", message: "Notifications need a secure connection. Open FitTrack over HTTPS to enable them." };
+    return { ok: false, reason: "insecure", message: "Notifications need a secure connection. Open AI FitTrack over HTTPS to enable them." };
   }
   if (support === "disabled") {
     return { ok: false, reason: "server-disabled", message: "Notifications are not available on this server right now." };
@@ -198,7 +198,7 @@ export async function enablePush(): Promise<EnableResult> {
   try {
     config = await getPushConfig();
   } catch {
-    return { ok: false, reason: "network-error", message: "Could not reach FitTrack to finish setting up notifications." };
+    return { ok: false, reason: "network-error", message: "Could not reach AI FitTrack to finish setting up notifications." };
   }
   if (!config.enabled || !config.publicKey) {
     return { ok: false, reason: "server-disabled", message: "Notifications are not available on this server right now." };
@@ -208,10 +208,10 @@ export async function enablePush(): Promise<EnableResult> {
   try {
     registration = await getRegistration();
   } catch {
-    return { ok: false, reason: "service-worker-unavailable", message: "FitTrack's background worker could not start, so notifications cannot be enabled." };
+    return { ok: false, reason: "service-worker-unavailable", message: "AI FitTrack's background worker could not start, so notifications cannot be enabled." };
   }
   if (!registration) {
-    return { ok: false, reason: "service-worker-unavailable", message: "FitTrack's background worker could not start, so notifications cannot be enabled." };
+    return { ok: false, reason: "service-worker-unavailable", message: "AI FitTrack's background worker could not start, so notifications cannot be enabled." };
   }
 
   // getSubscription first: a browser that already has one would otherwise fail subscribe() and leave
@@ -248,9 +248,9 @@ export async function enablePush(): Promise<EnableResult> {
       }
     }
     return cleanedUp
-      ? { ok: false, reason: "backend-rejected", message: "FitTrack could not save this subscription, so nothing was changed. Please try again." }
+      ? { ok: false, reason: "backend-rejected", message: "AI FitTrack could not save this subscription, so nothing was changed. Please try again." }
       : { ok: false, reason: "subscription-orphaned", cleanedUp: false,
-          message: "This browser created a subscription that FitTrack could not save, and removing it did not fully succeed. Turning notifications off and on again will retry." };
+          message: "This browser created a subscription that AI FitTrack could not save, and removing it did not fully succeed. Turning notifications off and on again will retry." };
   }
 }
 
@@ -283,7 +283,7 @@ export async function disablePush(): Promise<DisableResult> {
       await listPushSubscriptions();
     } catch {
       return { ok: false, serverRemoved: false, browserCleaned: true,
-        message: "FitTrack could not be reached to check your notification settings." };
+        message: "AI FitTrack could not be reached to check your notification settings." };
     }
     return { ok: true, serverRemoved: true, browserCleaned: true,
       message: "This device is not subscribed. No changes were needed." };
@@ -294,7 +294,7 @@ export async function disablePush(): Promise<DisableResult> {
   } catch {
     // The server still holds this subscription, so it is not disabled however clean the browser is.
     return { ok: false, serverRemoved: false, browserCleaned: false,
-      message: "FitTrack could not remove this subscription, so it is still active. Please try again." };
+      message: "AI FitTrack could not remove this subscription, so it is still active. Please try again." };
   }
 
   let browserCleaned = false;
@@ -308,7 +308,7 @@ export async function disablePush(): Promise<DisableResult> {
     ? { ok: true, serverRemoved: true, browserCleaned: true,
       message: "Notifications are off for this device. Other devices are unchanged." }
     : { ok: true, serverRemoved: true, browserCleaned: false,
-      message: "Removed from FitTrack. Browser subscription cleanup could not be completed." };
+      message: "Removed from AI FitTrack. Browser subscription cleanup could not be completed." };
 }
 
 /**
@@ -351,7 +351,7 @@ export async function readPushSnapshot(): Promise<PushSnapshot> {
   } catch {
     return { browserSupported, secureContext, serverConfigured: false, permission,
       thisDeviceSubscribed: false, otherDeviceCount: 0,
-      error: "Could not reach FitTrack to read the notification settings." };
+      error: "Could not reach AI FitTrack to read the notification settings." };
   }
 
   if (!serverConfigured) {
@@ -367,7 +367,7 @@ export async function readPushSnapshot(): Promise<PushSnapshot> {
     // A worker that will not start is a real, reportable condition rather than "not subscribed".
     return { browserSupported, secureContext, serverConfigured, permission,
       thisDeviceSubscribed: false, otherDeviceCount: 0,
-      error: "FitTrack's background worker could not be reached, so this device's state is unknown." };
+      error: "AI FitTrack's background worker could not be reached, so this device's state is unknown." };
   }
 
   // The server's list is the only evidence available about other devices. It is counted, never
@@ -410,7 +410,7 @@ export function pushExplainText(state: SupportState): string {
     case "unsupported":
       return "This browser cannot receive notifications.";
     case "insecure":
-      return "Notifications need a secure connection. Open FitTrack over HTTPS to enable them.";
+      return "Notifications need a secure connection. Open AI FitTrack over HTTPS to enable them.";
     case "disabled":
       return "Notifications are not available on this server right now.";
     case "denied":

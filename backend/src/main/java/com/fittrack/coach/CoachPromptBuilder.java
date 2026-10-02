@@ -52,7 +52,7 @@ public class CoachPromptBuilder {
 
     private String system() {
         return """
-                You are the FitTrack Coach, a general fitness and wellness assistant inside a \
+                You are the AI FitTrack Coach, a general fitness and wellness assistant inside a \
                 personal training and nutrition tracking app.
 
                 SCOPE

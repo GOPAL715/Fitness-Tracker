@@ -20,7 +20,7 @@ What *has* been verified deterministically is listed in
 
 | Requirement | Why |
 |---|---|
-| A deployed FitTrack reachable over **HTTPS** | The Push API is unavailable in an insecure context. `http://localhost` counts as secure for development; any other host does not. |
+| A deployed AI FitTrack reachable over **HTTPS** | The Push API is unavailable in an insecure context. `http://localhost` counts as secure for development; any other host does not. |
 | A real browser (Chrome, Edge, Firefox, or Safari 16.4+) | `PushManager` and service-worker push are required. |
 | A push service endpoint | The browser registers with FCM, Mozilla or WNS depending on browser. |
 | Database access to the deployment | To verify subscription rows and the delivery ledger. |
@@ -88,12 +88,12 @@ Record the actual result of each step. A step that was not performed must be mar
 
 ### 6.1 Login and enable notifications
 
-1. Sign in to FitTrack over HTTPS.
+1. Sign in to AI FitTrack over HTTPS.
 2. Go to **Profile**.
 3. Find **Reminder notifications**. The explanatory text should describe the current state.
 4. Click **Enable reminders**.
 
-The permission prompt appears **only** at this point. FitTrack never prompts on page load, by design:
+The permission prompt appears **only** at this point. AI FitTrack never prompts on page load, by design:
 an unprompted permission request is usually treated as untrustworthy and blocked.
 
 - **PASS** if the browser prompt appears and you choose **Allow**.
@@ -154,9 +154,9 @@ With the browser running (the tab may be closed):
 
 Click the notification.
 
-- **PASS** if the FitTrack window is focused, or opens at the FitTrack root when none existed.
-- Note: FitTrack currently has **no URL-based SPA routing or reminder detail route**. Notification
-  clicks therefore open/focus the FitTrack root rather than deep-linking to a specific reminder.
+- **PASS** if the AI FitTrack window is focused, or opens at the AI FitTrack root when none existed.
+- Note: AI FitTrack currently has **no URL-based SPA routing or reminder detail route**. Notification
+  clicks therefore open/focus the AI FitTrack root rather than deep-linking to a specific reminder.
   Reminder deep-linking is a future feature, out of scope for Phase 14.
 - **FAIL (security)** if the browser navigates to any external site. That would be an open-redirect
   defect: stop and report it immediately.
@@ -218,7 +218,7 @@ Fetch backend logs covering the test window and confirm:
 | `status=timeout` repeatedly | Push service unreachable from the deployment | Check egress rules from the backend network. |
 | Subscription removed unexpectedly | A 404/410 was returned | Confirm the browser did not unregister the service worker. |
 | `429` from the push service | Provider rate limit | Wait out the window; correctly temporary, not retried aggressively. |
-| 429 from FitTrack on subscribe | Push write bucket exhausted | Expected above 20 writes/min; wait a minute. Browsers do not normally retry this fast. |
+| 429 from AI FitTrack on subscribe | Push write bucket exhausted | Expected above 20 writes/min; wait a minute. Browsers do not normally retry this fast. |
 
 ## 8. What is already covered (automated)
 
@@ -240,7 +240,7 @@ These are exercised deterministically in CI and do **not** need repeating manual
 
 A pass requires: notification enabled via an explicit click; exactly one subscription row; exactly
 one `delivered` ledger row per occurrence; exactly one browser notification per occurrence; a
-click that focuses or opens FitTrack at the root and never navigates externally; 404/410 removing
+click that focuses or opens AI FitTrack at the root and never navigates externally; 404/410 removing
 the subscription without retry; 429/5xx/timeouts retried without removing it; and no secret
 material in any log line.
 

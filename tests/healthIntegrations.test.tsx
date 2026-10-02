@@ -181,7 +181,7 @@ describe("health integrations: connection states", () => {
     expect(screen.queryByTestId("permission-notice")).toBeNull();
   });
 
-  it("presents a reported permission as the app's claim, not as something FitTrack verified", async () => {
+  it("presents a reported permission as the app's claim, not as something AI FitTrack verified", async () => {
     // The backend cannot observe Android Health Connect permissions - they are granted on the
     // handset - so wording this as a verified fact is the real failure, not a style choice.
     mockGet.mockResolvedValue({
@@ -292,7 +292,7 @@ describe("health integrations: actions and secrecy", () => {
     mockDelete.mockResolvedValue({
       disconnected: true,
       imported_history_retained: true,
-      message: "Previously imported health data remains in FitTrack.",
+      message: "Previously imported health data remains in AI FitTrack.",
     });
     render(<HealthIntegrationsPanel onRefresh={vi.fn()} />);
     await waitFor(() => screen.getByRole("button", { name: /disconnect/i }));

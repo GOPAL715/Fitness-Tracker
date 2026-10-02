@@ -99,7 +99,7 @@ export function NotificationPreferencesPanel() {
       setStatus({ kind: "ready", message: "Your notification preferences were saved.", error: null });
     } catch {
       setStatus({ kind: "ready", message: null,
-        error: "FitTrack could not save your preferences, so nothing was changed. Please try again." });
+        error: "AI FitTrack could not save your preferences, so nothing was changed. Please try again." });
     } finally {
       setSaving(false);
     }
@@ -127,7 +127,7 @@ export function NotificationPreferencesPanel() {
       <div style={{ display: "grid", gap: 10 }}>
         <Toggle
           label="Reminder notifications"
-          hint="Whether FitTrack should send you reminders at all."
+          hint="Whether AI FitTrack should send you reminders at all."
           checked={form.reminderNotificationsEnabled}
           disabled={saving}
           onChange={(value) => update("reminderNotificationsEnabled", value)}

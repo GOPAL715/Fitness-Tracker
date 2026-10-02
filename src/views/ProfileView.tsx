@@ -213,7 +213,7 @@ const [pushNotice, setPushNotice] = useState<string | null>(null);
       // Re-read rather than assume: success is only believed once the server and browser confirm it.
       setPushState(await pushSupport());
     } catch {
-      setPushNotice("Could not reach FitTrack, so nothing was changed.");
+      setPushNotice("Could not reach AI FitTrack, so nothing was changed.");
     } finally {
       setPushBusy(false);
     }

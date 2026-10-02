@@ -167,7 +167,7 @@ public class HealthSyncController {
                 "disconnected", true,
                 "imported_history_retained", true,
                 "message", "Disconnecting stops future syncing. Previously imported health data"
-                        + " remains in FitTrack.");
+                        + " remains in AI FitTrack.");
     }
 
     private static UUID uuid(String principal) {

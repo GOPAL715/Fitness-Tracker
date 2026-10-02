@@ -139,14 +139,14 @@ public final class HealthProviderCatalog {
                 HealthProviders.HEALTH_CONNECT,
                 "Android Health Connect",
                 Availability.NATIVE_BRIDGE,
-                "A separate Android app on your phone, using your existing FitTrack sign-in",
+                "A separate Android app on your phone, using your existing AI FitTrack sign-in",
                 NO_CREDENTIAL,
                 HEALTH_CONNECT_METRICS,
                 true,
                 true,
                 "Health Connect is an Android-native, on-device API, so it cannot be connected from a"
-                        + " browser. A separate FitTrack Android app reads it and pushes steps, active"
-                        + " calories, weight and body fat to FitTrack using your existing account. The"
+                        + " browser. A separate AI FitTrack Android app reads it and pushes steps, active"
+                        + " calories, weight and body fat to AI FitTrack using your existing account. The"
                         + " server half of that path is ready; the Android app is a separate project and"
                         + " is not part of this one."));
         put(map, new ProviderDescriptor(
@@ -160,7 +160,7 @@ public final class HealthProviderCatalog {
                 true,
                 "Fitbit is reachable over the web, but only through an OAuth application registered"
                         + " with Fitbit. The client secret must never reach a browser, so the token"
-                        + " exchange and the API calls would have to run server-side. FitTrack ships no"
+                        + " exchange and the API calls would have to run server-side. AI FitTrack ships no"
                         + " such application, so no data can be imported from Fitbit today."));
         put(map, new ProviderDescriptor(
                 "garmin",
@@ -172,7 +172,7 @@ public final class HealthProviderCatalog {
                 false,
                 true,
                 "Garmin Connect exposes data through an OAuth application. As with Fitbit, the"
-                        + " credentials and token exchange would have to stay on the server. FitTrack"
+                        + " credentials and token exchange would have to stay on the server. AI FitTrack"
                         + " ships no such application, so no data can be imported from Garmin today."));
         put(map, new ProviderDescriptor(
                 "apple-health",
@@ -184,18 +184,18 @@ public final class HealthProviderCatalog {
                 false,
                 true,
                 "Apple Health has no web API. Reading it requires a native iOS app using HealthKit, so"
-                        + " it cannot be connected from a browser at all. If FitTrack is ever wrapped in"
+                        + " it cannot be connected from a browser at all. If AI FitTrack is ever wrapped in"
                         + " a native shell, that shell would use the same ingest contract."));
         put(map, new ProviderDescriptor(
                 HealthProviders.FALLBACK,
                 "Manual entry",
                 Availability.MANUAL,
-                "Nothing to connect: values are typed into FitTrack",
+                "Nothing to connect: values are typed into AI FitTrack",
                 NO_CREDENTIAL,
                 ACTIVITY_AND_BODY_METRICS,
                 true,
                 true,
-                "Entered by hand in FitTrack. Always available, and the fallback a reader falls back"
+                "Entered by hand in AI FitTrack. Always available, and the fallback a reader falls back"
                         + " to when no device measurement exists for a day."));
         put(map, new ProviderDescriptor(
                 "fake-wearable",

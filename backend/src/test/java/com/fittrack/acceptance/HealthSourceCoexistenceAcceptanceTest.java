@@ -363,7 +363,7 @@ class HealthSourceCoexistenceAcceptanceTest extends com.fittrack.acceptance.supp
         assertStatus(disconnect, 200);
         assertThat(disconnect.getResponse().getContentAsString())
                 .contains("imported_history_retained")
-                .contains("remains in FitTrack");
+                .contains("remains in AI FitTrack");
 
         assertThat(jdbc.queryForObject("select count(*) from health_devices where id=?",
                 Integer.class, device)).isZero();

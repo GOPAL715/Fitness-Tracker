@@ -276,7 +276,7 @@ function ConnectionRow({ connection, busy, canSync, onSync, onDisconnect }: {
           className="btn btn-secondary btn-sm"
           onClick={onDisconnect}
           disabled={busy !== null}
-          title="Disconnecting stops future syncing. Previously imported health data remains in FitTrack."
+          title="Disconnecting stops future syncing. Previously imported health data remains in AI FitTrack."
         >
           Disconnect
         </button>

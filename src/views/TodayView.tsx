@@ -434,7 +434,7 @@ export default function TodayView({
         {insights.length === 0 ? (
           <div className="card">
             <p style={{ fontSize: 14, color: "#94a3b8", margin: 0 }}>
-              Keep logging for a few more days and FitTrack AI will start surfacing trends and explanations here.
+              Keep logging for a few more days and AI FitTrack will start surfacing trends and explanations here.
             </p>
           </div>
         ) : (

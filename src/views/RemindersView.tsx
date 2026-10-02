@@ -113,7 +113,7 @@ export default function RemindersView({ onOpen }: Props) {
           <EmptyState
             icon={<Bell size={22} />}
             title="No reminders yet"
-            message="Create one and FitTrack will nudge you at the time you choose."
+            message="Create one and AI FitTrack will nudge you at the time you choose."
           />
         </div>
       ) : (

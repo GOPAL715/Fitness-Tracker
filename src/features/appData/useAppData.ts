@@ -42,7 +42,7 @@ export function useAppData(): UseAppData {
       setData(next);
       setHasOnboarded(!needsOnboarding(next.profile));
     } catch {
-      setError("FitTrack could not load your data. Check your connection and try again.");
+      setError("AI FitTrack could not load your data. Check your connection and try again.");
     } finally {
       setLoading(false);
     }

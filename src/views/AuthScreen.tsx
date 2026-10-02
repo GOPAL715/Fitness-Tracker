@@ -54,7 +54,7 @@ export default function AuthScreen() {
             <Activity size={22} color="#38bdf8" />
           </div>
           <span className="brand-name">
-            FitTrack <span style={{ color: "#38bdf8" }}>AI</span>
+            AI <span style={{ color: "#38bdf8" }}>FitTrack</span>
           </span>
         </div>
 
@@ -133,7 +133,7 @@ export default function AuthScreen() {
         <div className="auth-switch">
           {mode === "signin" ? (
             <>
-              <span>New to FitTrack?</span>
+              <span>New to AI FitTrack?</span>
               <button type="button" onClick={() => { setMode("signup"); setError(null); setNotice(null); }}>
                 Create an account
               </button>

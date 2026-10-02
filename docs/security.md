@@ -67,4 +67,4 @@ Secrets rotation must account for existing JWTs. Changing the JWT secret invalid
 
 ## Data privacy
 
-FitTrack data includes health, nutrition, biometric, body, and activity information. Treat it as sensitive even when individual fields look ordinary. Define retention, consent, user export/deletion, incident response, and audit requirements before importing real data. Do not place real health data in logs, test fixtures, AI prompts, or local development logs.
+AI FitTrack data includes health, nutrition, biometric, body, and activity information. Treat it as sensitive even when individual fields look ordinary. Define retention, consent, user export/deletion, incident response, and audit requirements before importing real data. Do not place real health data in logs, test fixtures, AI prompts, or local development logs.

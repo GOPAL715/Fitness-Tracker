@@ -1,8 +1,8 @@
-# FitTrack AI
+# AI FitTrack
 
 A multi-user fitness platform built with React, TypeScript, Vite, Spring Boot, and PostgreSQL.
 
-FitTrack tracks training down to the individual set, nutrition down to the individual food item, daily
+AI FitTrack tracks training down to the individual set, nutrition down to the individual food item, daily
 health metrics, habits and goals — and turns all of it into explainable insights and AI-assisted coaching.
 
 ---
@@ -27,7 +27,7 @@ The app is organised around seven primary views:
 ## 2. Architecture
 
 ```
-                       FITTRACK
+                       AI FITTRACK
                           |
      +--------------------+--------------------+
      |                    |                    |
@@ -275,7 +275,7 @@ back to `index.html` (`dist/_redirects` is included for that).
 
 ## 15. Troubleshooting
 
-- **"FitTrack could not load your data"** — the database or network is unreachable; use Try again.
+- **"AI FitTrack could not load your data"** — the database or network is unreachable; use Try again.
 - **"AI analysis is not configured"** — the backend AI provider is not configured.
 - **Empty screens after signing in** — expected for a brand new account; log data or use the
   seeded demo account.
@@ -301,11 +301,11 @@ troubleshooting, incident response and rollback.
 no web access. Fitbit and Garmin need an OAuth application with server-side credentials. All four are
 described honestly in the Profile screen along with exactly what each would require. Since Phase 20 that
 list is served by `GET /api/v1/health/integrations` rather than hardcoded in the client, so what a
-person sees and what the backend would accept cannot drift. No provider is connected, and FitTrack
+person sees and what the backend would accept cannot drift. No provider is connected, and AI FitTrack
 holds no provider credential of any kind.
 
 **The PWA shell works offline, and workout logging now queues offline.** The service worker caches
-the app shell so FitTrack opens without a connection, and deliberately never caches private health
+the app shell so AI FitTrack opens without a connection, and deliberately never caches private health
 data or intercepts writes. Logging a workout while offline stores the exact request in an
 IndexedDB queue and replays it through the normal REST API on reconnect, carrying a stable
 `Idempotency-Key` so a retried submission cannot create a duplicate session. The header shows a

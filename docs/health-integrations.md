@@ -1,7 +1,7 @@
 docs/health-integrations.md
 # Health integrations
 
-FitTrack stores a user's own health metrics. Phase 10 added the ability to hold **several sources
+AI FitTrack stores a user's own health metrics. Phase 10 added the ability to hold **several sources
 for the same day** - one hand-entered row and one row per connected device - and to decide, once and
 deterministically, which value a reader sees. This document covers the storage model, the
 integration boundary, and what is deliberately not implemented.
@@ -64,7 +64,7 @@ separate repository.
 a negative count, a non-positive weight, a body-fat percentage over 100, and identifiers that do not
 fit their column.
 
-It makes **no medical judgement**. FitTrack has no clinical reference ranges, so a low HRV or an
+It makes **no medical judgement**. AI FitTrack has no clinical reference ranges, so a low HRV or an
 unusual body-fat value is the user's real data and is kept. Rejected records are counted and
 reported, never fatal, and never surface as an HTTP 500.
 
@@ -73,13 +73,13 @@ reported, never fatal, and never surface as an HTTP 500.
 **Health Connect is Android-native. This Spring backend cannot and does not access it directly.**
 
 ```
-Android FitTrack application
+Android AI FitTrack application
         |  Health Connect APIs (Android-only, on-device)
         v
-Normalised health payload, authenticated with the user's existing FitTrack JWT
+Normalised health payload, authenticated with the user's existing AI FitTrack JWT
         |
         v
-FitTrack backend  ->  HealthSyncService  ->  PostgreSQL
+AI FitTrack backend  ->  HealthSyncService  ->  PostgreSQL
 ```
 
 What exists here: the provider-neutral storage model, the normalisation boundary, technical
@@ -112,7 +112,7 @@ connections:
       "label": "Android Health Connect",
       "availability": "native_bridge",        // native_bridge | server_credentials_required
                                               // | native_app_required | manual
-      "auth_model": "A separate Android app on your phone, using your existing FitTrack sign-in",
+      "auth_model": "A separate Android app on your phone, using your existing AI FitTrack sign-in",
       "credential_model": "none",
       "supported_metrics": ["steps", "active_calories", "weight", "body_fat"],
       "connectable": true,
@@ -134,7 +134,7 @@ neither can acquire a provider the other has not heard of.
 but it is **never served to a client**: it reaches no external service.
 
 `credential_model` is `"none"` for every provider, and that is a fact rather than an omission. No
-adapter performs an OAuth exchange, so FitTrack holds no provider access token, refresh token or
+adapter performs an OAuth exchange, so AI FitTrack holds no provider access token, refresh token or
 client secret, and there is no column to hold one.
 
 ### Connection state
@@ -292,13 +292,13 @@ so there is no OAuth exchange, no token table, and no client secret.
 Verified against Google's Health Connect documentation:
 
 - `StepsRecord` and `ActiveCaloriesBurnedRecord` are **interval** records. Their value is the total
-  over `[startTime, endTime]`, and summing a period's records gives the period total. FitTrack
+  over `[startTime, endTime]`, and summing a period's records gives the period total. AI FitTrack
   therefore **adds** them per day.
 - `WeightRecord` and `BodyFatRecord` are **instantaneous** measurements, aggregated only as
-  `WEIGHT_AVG/MAX/MIN` and never as a total. FitTrack therefore **selects** the latest reading per
+  `WEIGHT_AVG/MAX/MIN` and never as a total. AI FitTrack therefore **selects** the latest reading per
   day and never sums them.
 - A deletion is reported as a **record id only** - the entry carries no value and no timestamps. That
-  is why FitTrack retains a source ledger: without it a deletion could not be reconciled.
+  is why AI FitTrack retains a source ledger: without it a deletion could not be reconciled.
 - Timestamps are absolute instants. The local calendar day is derived on the server from the
   caller's IANA zone, because the platform does not supply a user calendar.
 
@@ -318,7 +318,7 @@ documented as such in `HealthConnectAggregator`; the alternatives lose data or o
 
 | Control | Value | Notes |
 | --- | --- | --- |
-| Max records per batch | 500 | FitTrack's own limit, not a Google quota. Exceeded returns 413. |
+| Max records per batch | 500 | AI FitTrack's own limit, not a Google quota. Exceeded returns 413. |
 | Max request body | 1 MB | Enforced at the filter, before the body is buffered. |
 | Rate limit | 60 requests/min | Reuses the Phase 16 `RateLimitService`, keyed by authenticated user. |
 | Accepted history | 30 days | Bounds retention so a bridge cannot make the server keep everything. |

@@ -154,7 +154,7 @@ only when it tolerates the newer schema.
 
 ## External provider boundaries
 
-Three capabilities need credentials or a channel that FitTrack does not ship. Each is represented
+Three capabilities need credentials or a channel that AI FitTrack does not ship. Each is represented
 by an explicit, honest default rather than a stub that pretends to work, so a deployment starts
 cleanly and reports the boundary instead of failing to boot or silently inventing data.
 

@@ -1,4 +1,4 @@
-# FitTrack AI â€” Database
+# AI FitTrack â€” Database
 
 24 tables in the `public` schema. Row level security is enabled on every one of
 them, with 90 policies in total. The Supabase security advisor reports zero

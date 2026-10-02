@@ -99,7 +99,7 @@ Disable asks the server to drop the row **first**, then unsubscribes locally. Th
 destroy the only copy of the endpoint needed to identify the row. If the delete fails, the browser is
 left subscribed and the screen says the subscription is **still active** — it is, because the server
 can still deliver to it. If the delete succeeds but the local unsubscribe fails, the screen reports
-"Removed from FitTrack. Browser subscription cleanup could not be completed." rather than implying
+"Removed from AI FitTrack. Browser subscription cleanup could not be completed." rather than implying
 everything is clean.
 
 ### Multi-device behaviour

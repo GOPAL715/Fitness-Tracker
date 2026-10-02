@@ -106,7 +106,7 @@ export default function App() {
     setMenuOpen(false);
   }
 
-  if (authLoading) return <LoadingScreen message="Starting FitTrack…" />;
+  if (authLoading) return <LoadingScreen message="Starting AI FitTrack…" />;
   if (!user) return <AuthScreen />;
 
   // A reminder deep link takes precedence over the tab content, and is rendered inside the same

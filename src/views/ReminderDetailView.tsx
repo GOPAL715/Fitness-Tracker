@@ -176,7 +176,7 @@ export default function ReminderDetailView({ id, onBack, onEdit }: Props) {
         onClick={onBack}
         style={{ display: "inline-flex", alignItems: "center", gap: 6, marginBottom: 16 }}
       >
-        <ArrowLeft size={15} /> Back to FitTrack
+        <ArrowLeft size={15} /> Back to AI FitTrack
       </button>
 
       {state.kind === "loading" && <p style={{ color: "#94a3b8" }}>Loading reminder…</p>}
