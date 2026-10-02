@@ -150,6 +150,36 @@ public class OwnedResourceService {
     private static final Set<String> GOAL_STATUSES = Set.of("active", "achieved");
 
     /**
+     * Writable columns holding a PostgreSQL {@code time} (no zone, no date).
+     *
+     * <p>These are named explicitly rather than matched by a suffix. The previous rule keyed on
+     * {@code endsWith("_time")}, which matched {@code scheduled_time} but not
+     * {@code quiet_hours_start} or {@code quiet_hours_end}: those two end in {@code _start} and
+     * {@code _end}, so they fell through the conversion untouched and the raw request string was
+     * bound to the column. PostgreSQL rejects a varchar argument for a {@code time} column as a
+     * grammar error, which the generic handler reported as an opaque 500. The reminder form on the
+     * Habits screen sends exactly these two values, so quiet hours were unreachable through the API.
+     *
+     * <p>A suffix rule would have re-appeared the same gap for any future {@code _start}/{@code _end}
+     * time column, so the set is the contract. Adding a time column to a Spec means adding it here
+     * in the same change, which is why this sits next to the other per-column declarations.
+     */
+    private static final Set<String> TIME_COLUMNS = Set.of(
+            "scheduled_time", "quiet_hours_start", "quiet_hours_end");
+
+    /**
+     * Writable columns holding a PostgreSQL {@code timestamptz}.
+     *
+     * <p>Same reason as {@link #TIME_COLUMNS}: an ISO-8601 string bound straight to a
+     * {@code timestamptz} column is a driver-level type mismatch, not a client error, so it escaped
+     * as a 500. These two are the only client-writable instant columns; {@code created_at} is
+     * server-generated everywhere, and the composite session endpoint deliberately stamps
+     * {@code started_at} itself, so nothing here changes that behaviour.
+     */
+    private static final Set<String> TIMESTAMP_COLUMNS = Set.of(
+            "started_at", "completed_at");
+
+    /**
      * The goal types the product offers, taken from the client's own list so the two cannot drift.
      */
     private static final Set<String> GOAL_TYPES = Set.of("Lose Weight", "Build Muscle", "Build Strength",
@@ -656,9 +686,14 @@ public class OwnedResourceService {
                 if (value instanceof String text) value = new java.math.BigDecimal(text);
             } else if (name.endsWith("_completed") || name.endsWith("_active") || name.endsWith("_enabled") || name.endsWith("_read") || name.endsWith("_favorite")) {
                 if (value instanceof String text) value = Boolean.valueOf(text);
-            } else if (name.endsWith("_time")) {
+            } else if (TIME_COLUMNS.contains(name)) {
                 // Time columns (for example reminder scheduled_time) reject a varchar argument.
-                if (value instanceof String text) value = java.sql.Time.valueOf(text.length() == 5 ? text + ":00" : text);
+                // Parsed explicitly so a malformed value is a 400 rather than an internal error.
+                if (value instanceof String text) value = time(name, text);
+            } else if (TIMESTAMP_COLUMNS.contains(name)) {
+                // Same reason for timestamptz columns: the string is a valid ISO-8601 instant, but
+                // binding it untyped is a driver-level mismatch, not a client error.
+                if (value instanceof String text) value = timestamp(name, text);
             }
             // The client sends list-shaped values (for example reminder days_of_week) as JSON
             // arrays, while the matching columns are text. Join them into the stored CSV form.
@@ -721,5 +756,52 @@ public class OwnedResourceService {
     private static UUID uuid(String value, String label) {
         try { return UUID.fromString(value); }
         catch (RuntimeException e) { throw new IllegalArgumentException("Invalid " + label); }
+    }
+
+    /**
+     * Converts a request time-of-day into the typed value the driver binds to a {@code time} column.
+     *
+     * <p>Parses through {@link java.time.LocalTime} rather than {@link java.sql.Time#valueOf}, for
+     * two reasons. It accepts the {@code HH:mm} the reminder form produces and {@code HH:mm:ss},
+     * which is the precision the previous suffix rule allowed, so the contract is unchanged. And it
+     * rejects an out-of-range value instead of normalising it: {@code Time.valueOf} reads a
+     * {@code length() == 5} value as {@code HH:mm:ss} by hand, so {@code "25:00"} became
+     * {@code "25:00:00"} and PostgreSQL stored that as {@code 01:00:00}, silently turning a typo into
+     * a different reminder window. A malformed value is a client error, so it is reported as one
+     * rather than being left to the driver to reject as a grammar error and surface as a 500.
+     *
+     * <p>This mirrors how NotificationPreferencesService converts the same column type for the
+     * notification preferences table, so the two paths cannot disagree about what a valid time is.
+     */
+    private static java.sql.Time time(String column, String value) {
+        try {
+            return java.sql.Time.valueOf(java.time.LocalTime.parse(value.trim()));
+        } catch (java.time.format.DateTimeParseException e) {
+            throw new IllegalArgumentException(column + " must be a valid HH:mm time");
+        }
+    }
+
+    /**
+     * Converts an ISO-8601 instant into the typed value the driver binds to a {@code timestamptz}
+     * column.
+     *
+     * <p>Timezone semantics are preserved rather than reinterpreted: a value carrying an offset is
+     * converted to the instant it denotes, so the same wall clock written in two zones stores two
+     * different instants exactly as the column implies. A value with no offset is read as UTC,
+     * matching the {@code hibernate.jdbc.time_zone: UTC} this application is configured with, so a
+     * client that omits the offset is not silently shifted by the server's own default.
+     */
+    private static java.sql.Timestamp timestamp(String column, String value) {
+        String text = value.trim();
+        try {
+            return java.sql.Timestamp.from(java.time.OffsetDateTime.parse(text).toInstant());
+        } catch (java.time.format.DateTimeParseException e) {
+            try {
+                return java.sql.Timestamp.from(
+                        java.time.LocalDateTime.parse(text).toInstant(java.time.ZoneOffset.UTC));
+            } catch (java.time.format.DateTimeParseException nested) {
+                throw new IllegalArgumentException(column + " must be a valid ISO-8601 timestamp");
+            }
+        }
     }
 }
