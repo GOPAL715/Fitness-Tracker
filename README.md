@@ -60,7 +60,7 @@ The React application calls the Spring Boot REST API with JWT authentication. Po
 
 ## 3. Tech stack
 
-- **Frontend:** React 18, TypeScript (strict), Vite 5, hand-written CSS design system, lucide-react icons
+- **Frontend:** React 18, TypeScript (strict), Vite 8, hand-written CSS design system, lucide-react icons
 - **Backend:** Spring Boot 3.3, Java 21, PostgreSQL, Flyway
 - **AI:** Optional OpenAI-compatible provider invoked only by the backend
 
@@ -232,15 +232,16 @@ remain Phase 14 work.
 
 ```bash
 npm install
-npm run dev      # development server
-npm run build    # type check + production build
-npm run test     # run the test suite once
-npm run preview  # preview the production build
+npm run dev         # development server
+npm run type-check  # type check only, without a build
+npm run build       # type check + production build
+npm run test        # run the test suite once
+npm run preview     # preview the production build
 ```
 
 ## 13. Testing
 
-98 automated tests cover the pure business logic with Vitest:
+520 automated tests cover the pure business logic with Vitest:
 
 - nutrition scaling, macro totals and food matching
 - AI response validation, malformed input, confidence tiers
@@ -255,6 +256,13 @@ npm run preview  # preview the production build
 
 ```bash
 npm run test
+```
+
+A type error is a distinct failure from a failing test, so it is reported separately. The build runs
+`tsc` too, but `type-check` on its own is what CI calls:
+
+```bash
+npm run type-check
 ```
 
 Not covered by the frontend unit suite: live AI provider calls and UI rendering. Backend acceptance
